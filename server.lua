@@ -19,11 +19,11 @@ function(require)
     term.setTextColor(colors.white)
     term.clear()
     
-    -- ===== Songs setup (from config.json) =====
+    -- ===== Playlists setup (from config.json) =====
     -- Expect a JSON file named `config.json` in the same directory with structure:
     -- [ { "name": "display name", "repo": "user/repo" }, ... ]
     local configFile = "config.json"
-    local songs = {}
+    local playlists = {}
 
     if not fs.exists(configFile) then
         error("Config file '"..configFile.."' not found. Create it with format: [{ \"name\": \"a\", \"repo\": \"user/repo\" }]")
@@ -38,7 +38,7 @@ function(require)
         error("Invalid JSON in '"..configFile.."'")
     end
 
-    -- For each repo entry in the config, fetch its index.txt and append songs.
+    -- For each repo entry in the config, fetch its index.txt and build a playlist.
     for _, entry in ipairs(cfg) do
         if type(entry) == "table" and entry.repo then
             local repo = entry.repo
@@ -50,9 +50,10 @@ function(require)
                 resp.close()
                 local songNames = textutils.unserialize(body)
                 if type(songNames) == "table" then
+                    local plist = { name = displayPrefix, repo = repo, songs = {} }
                     for i, name in ipairs(songNames) do
-                        local songName = "["..displayPrefix.."] "..name
-                        table.insert(songs, {
+                        local songName = name
+                        table.insert(plist.songs, {
                             name = songName,
                             fn = (function(r, n)
                                 return function()
@@ -66,16 +67,16 @@ function(require)
                             end)(repo, name)
                         })
                     end
+                    table.insert(playlists, plist)
                 end
             else
-                -- skip repo on HTTP failure
                 print("Warning: failed to fetch index for repo: "..repo)
             end
         end
     end
 
-    if #songs == 0 then
-        error("No songs found in configured repos (check config.json and index.txt files)")
+    if #playlists == 0 then
+        error("No playlists found in configured repos (check config.json and index.txt files)")
     end
     
     -- ===== Playback state =====
@@ -98,6 +99,8 @@ function(require)
     local volume = .35
     local decoder = dfpwm.make_decoder()
     local currentPage = settings.get("currentPage", 1)
+    -- saved playlist index (1..#playlists) or nil
+    local savedPlaylist = settings.get("playlist", 1)
     local width, height = term.getSize()
     local topRows = 2
     local bottomRows = 5 -- reserve bottom 5 lines
@@ -117,6 +120,36 @@ function(require)
     
     -- Button storage for click detection
     local buttons = {}
+
+    -- Build songs variable from selected playlist (playlist index chosen later)
+    local songs = {}
+
+    -- Playlist selection: use savedPlaylist if valid, otherwise prompt user at startup
+    local selectedPlaylist = nil
+    if type(savedPlaylist) == "number" and playlists[savedPlaylist] then
+        selectedPlaylist = savedPlaylist
+    else
+        -- prompt selection
+        term.setBackgroundColor(colors.black)
+        term.setTextColor(colors.white)
+        term.clear()
+        term.setCursorPos(2,1)
+        term.write("Select playlist:\n")
+        for i, p in ipairs(playlists) do
+            term.write(string.format(" %d) %s\n", i, p.name))
+        end
+        term.write("Enter number: ")
+        local ok, input = pcall(term.read)
+        local n = tonumber(input)
+        if type(n) == "number" and playlists[n] then selectedPlaylist = n end
+        if not selectedPlaylist then selectedPlaylist = 1 end
+    end
+
+    -- Apply selected playlist
+    local playlist = playlists[selectedPlaylist]
+    songs = playlist.songs
+    settings.set("playlist", selectedPlaylist)
+    settings.save()
     
     -- ===== UI functions =====
     local function totalPages()
