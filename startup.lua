@@ -17,6 +17,23 @@ else
 	end
 end
 
+-- Try to fetch latest config.json from the repo so playlists stay dynamic.
+local configRemote = "https://github.com/kami-tsuki/cc-atm10-music/raw/refs/heads/main/config.json"
+if http then
+	local ok, resp = pcall(function() return http.get(configRemote) end)
+	if ok and resp then
+		local cfg = resp.readAll()
+		resp.close()
+		local fh = fs.open("config.json", "w")
+		if fh then
+			fh.write(cfg)
+			fh.close()
+		end
+	else
+		-- couldn't fetch remote config; leave local config.json as-is (if any)
+	end
+end
+
 local fn = load("return " .. source, "code", "t", _G)
 setfenv(fn, _G)
 fn()(require)
