@@ -16,6 +16,11 @@ function(require)
         local ok = pcall(rednet.open, modemName)
         if ok then rednetEnabled = true end
     end
+    local function sendCmd(tbl)
+        if rednetEnabled and rednet then
+            pcall(function() rednet.broadcast(tbl, "cc-atm10-music") end)
+        end
+    end
     
     -- Terminal setup
     local mon = peripheral.find("monitor")
@@ -244,7 +249,7 @@ function(require)
                 if stopFlag then
                     stopFlag = false
                     -- notify clients to stop
-                    if rednetEnabled and rednet then pcall(function() rednet.broadcast({cmd="stop"}, "cc-atm10-music") end) end
+                        sendCmd({ cmd = "stop" })
                 else
                     -- Auto-advance
                     if loopMode == 2 then
@@ -270,11 +275,9 @@ function(require)
                     settings.set("playing", playing)
                     settings.save()
                     -- notify clients about new song
-                    if rednetEnabled and rednet and currentSong and playlist and playlist.repo then
-                        pcall(function()
-                            rednet.broadcast({cmd="play", repo=playlist.repo, name=currentSong.name}, "cc-atm10-music")
-                        end)
-                    end
+                        if currentSong and playlist and playlist.repo then
+                            sendCmd({ cmd = "play", repo = playlist.repo, name = currentSong.name })
+                        end
                 end
                 drawUI()
             else
@@ -308,16 +311,16 @@ function(require)
                         -- Identify which button was clicked
                         if btn.text:find("Shuffle") then shuffle = not shuffle
                         elseif btn.text:find("Loop") then loopMode = (loopMode+1)%3
-                        elseif btn.text:find("Prev") and currentPage>1 then currentPage=currentPage-1
-                        elseif btn.text:find("Next") and currentPage<totalPages() then currentPage=currentPage+1
                         elseif btn.text=="PrevPl" then
                             -- previous playlist
                             for i,p in ipairs(playlists) do if p==playlist then
                                 local ni = (i-2) % #playlists + 1
                                 playlist = playlists[ni]
                                 songs = playlist.songs
-                                settings.set("playlist", playlist.name)
-                                settings.save()
+                                    settings.set("playlist", playlist.name)
+                                    settings.save()
+                                    -- notify clients of stop (playlist change)
+                                    sendCmd({ cmd = "stop" })
                                 break
                             end end
                         elseif btn.text=="NextPl" then
@@ -326,19 +329,24 @@ function(require)
                                 local ni = (i % #playlists) + 1
                                 playlist = playlists[ni]
                                 songs = playlist.songs
-                                settings.set("playlist", playlist.name)
-                                settings.save()
+                                    settings.set("playlist", playlist.name)
+                                    settings.save()
+                                    sendCmd({ cmd = "stop" })
                                 break
                             end end
+                        elseif btn.text:find("Prev") and currentPage>1 then currentPage=currentPage-1
+                        elseif btn.text:find("Next") and currentPage<totalPages() then currentPage=currentPage+1
                         elseif btn.text:find("Stopped") or btn.text:find("Playing") then
                             if playing then
                                 -- Pause
                                 stopFlag = true
                                 playing = false
+                                    sendCmd({ cmd = "stop" })
                             else
                                 -- Resume/start
                                 if currentSong then
                                     playing = true
+                                        sendCmd({ cmd = "play", repo = playlist.repo, name = currentSong.name })
                                 end
                             end
                         elseif btn.text:find("Skip") then
@@ -356,9 +364,13 @@ function(require)
                                 end
                                 stopFlag = true
                                 playing = true
-                            end
+                                    -- notify clients about new song
+                                    sendCmd({ cmd = "play", repo = playlist.repo, name = currentSong.name })
+                                end
                         elseif btn.text=="-" then volume = math.max(0,volume-0.05)
                         elseif btn.text=="+" then volume = math.min(1,volume+0.05)
+                                -- propagate volume change to clients
+                                sendCmd({ cmd = "setVolume", volume = volume })
                         end
                         drawUI()
                     end
