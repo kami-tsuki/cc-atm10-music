@@ -317,7 +317,10 @@ function(require)
                                 local ni = (i-2) % #playlists + 1
                                 playlist = playlists[ni]
                                 songs = playlist.songs
+                                    -- reset to first page of the new playlist
+                                    currentPage = 1
                                     settings.set("playlist", playlist.name)
+                                    settings.set("currentPage", currentPage)
                                     settings.save()
                                     -- notify clients of stop (playlist change)
                                     sendCmd({ cmd = "stop" })
@@ -329,7 +332,10 @@ function(require)
                                 local ni = (i % #playlists) + 1
                                 playlist = playlists[ni]
                                 songs = playlist.songs
+                                    -- reset to first page of the new playlist
+                                    currentPage = 1
                                     settings.set("playlist", playlist.name)
+                                    settings.set("currentPage", currentPage)
                                     settings.save()
                                     sendCmd({ cmd = "stop" })
                                 break
