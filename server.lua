@@ -83,15 +83,6 @@ function(require)
     local savedName = settings.get("currentSong", nil)
     local currentSong = nil
     
-    if savedName ~= nil then
-        for _, song in ipairs(songs) do
-            if song.name == savedName then
-                currentSong = song
-                break
-            end
-        end
-    end
-    
     local playing = settings.get("playing", false)
     local stopFlag = false
     local shuffle = settings.get("shuffle", true)
@@ -150,6 +141,16 @@ function(require)
     songs = playlist.songs
     settings.set("playlist", selectedPlaylist)
     settings.save()
+
+    -- Restore currentSong from savedName now that `songs` exists
+    if savedName ~= nil then
+        for _, song in ipairs(songs) do
+            if song.name == savedName then
+                currentSong = song
+                break
+            end
+        end
+    end
     
     -- ===== UI functions =====
     local function totalPages()
