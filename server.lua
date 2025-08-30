@@ -6,6 +6,16 @@ function(require)
     local dfpwm = require("cc.audio.dfpwm")
     local speakers = { peripheral.find("speaker") }
     if not peripheral.find("speaker") then error("No speaker(s) attached. If this is a pocket computer, combine it in the crafting grid.") end
+
+    -- Ender modem / rednet support (optional)
+    local modem = peripheral.find("ender_modem") or peripheral.find("modem")
+    local rednetEnabled = false
+    local modemName = nil
+    if modem and rednet then
+        modemName = peripheral.getName(modem)
+        local ok = pcall(rednet.open, modemName)
+        if ok then rednetEnabled = true end
+    end
     
     -- Terminal setup
     local mon = peripheral.find("monitor")
@@ -233,6 +243,8 @@ function(require)
     
                 if stopFlag then
                     stopFlag = false
+                    -- notify clients to stop
+                    if rednetEnabled and rednet then pcall(function() rednet.broadcast({cmd="stop"}, "cc-atm10-music") end) end
                 else
                     -- Auto-advance
                     if loopMode == 2 then
@@ -257,6 +269,12 @@ function(require)
                     settings.set("currentSong", _cs)
                     settings.set("playing", playing)
                     settings.save()
+                    -- notify clients about new song
+                    if rednetEnabled and rednet and currentSong and playlist and playlist.repo then
+                        pcall(function()
+                            rednet.broadcast({cmd="play", repo=playlist.repo, name=currentSong.name}, "cc-atm10-music")
+                        end)
+                    end
                 end
                 drawUI()
             else
