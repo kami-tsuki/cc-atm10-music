@@ -94,7 +94,7 @@ function(require)
     local savedPlaylistName = settings.get("playlist", nil)
     local width, height = term.getSize()
     local topRows = 2
-    local bottomRows = 5 -- reserve bottom 5 lines
+    local bottomRows = 6 -- reserve bottom 6 lines (extra row for playlist controls)
     local songsPerPage = height - topRows - bottomRows
 
     -- Ensure a settings file exists and stored values are non-nil.
@@ -171,9 +171,10 @@ function(require)
         -- Reserve a blank line
         y = y + 1
     
-        -- Bottom controls (4 lines)
+        -- Bottom controls (5 lines): playlist row + controls
         buttons = {} -- reset button list
         local btnLines = {
+            {"Radio: "..(playlist and playlist.name or "(none)"), "PrevPl","NextPl"},
             {"Shuffle: "..(shuffle and "On" or "Off"), "Loop: "..({[0]="Off",[1]="All",[2]="One"})[loopMode]},
             {"Page "..currentPage.."/"..totalPages(), "Prev","Next"},
             {(playing and "Playing" or "Stopped"), "Skip"},
@@ -291,6 +292,26 @@ function(require)
                         elseif btn.text:find("Loop") then loopMode = (loopMode+1)%3
                         elseif btn.text:find("Prev") and currentPage>1 then currentPage=currentPage-1
                         elseif btn.text:find("Next") and currentPage<totalPages() then currentPage=currentPage+1
+                        elseif btn.text=="PrevPl" then
+                            -- previous playlist
+                            for i,p in ipairs(playlists) do if p==playlist then
+                                local ni = (i-2) % #playlists + 1
+                                playlist = playlists[ni]
+                                songs = playlist.songs
+                                settings.set("playlist", playlist.name)
+                                settings.save()
+                                break
+                            end end
+                        elseif btn.text=="NextPl" then
+                            -- next playlist
+                            for i,p in ipairs(playlists) do if p==playlist then
+                                local ni = (i % #playlists) + 1
+                                playlist = playlists[ni]
+                                songs = playlist.songs
+                                settings.set("playlist", playlist.name)
+                                settings.save()
+                                break
+                            end end
                         elseif btn.text:find("Stopped") or btn.text:find("Playing") then
                             if playing then
                                 -- Pause
