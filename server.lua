@@ -1,4 +1,6 @@
-function(require, repo)
+
+-- dont add "return" (idk why this is so, but keep it)
+function(require)
     -- CC: Tweaked DFPWM Playlist with Stop, Loop, Shuffle, and Adaptive Buttons (Clickable aligned)
     
     local dfpwm = require("cc.audio.dfpwm")
@@ -17,18 +19,63 @@ function(require, repo)
     term.setTextColor(colors.white)
     term.clear()
     
-    -- ===== Songs setup =====
-    local songIndexUrl = "https://raw.githubusercontent.com/" .. repo .. "/refs/heads/main/index.txt"
-    local songNames = textutils.unserialize(http.get(songIndexUrl).readAll())
+    -- ===== Songs setup (from config.json) =====
+    -- Expect a JSON file named `config.json` in the same directory with structure:
+    -- [ { "name": "display name", "repo": "user/repo" }, ... ]
+    local configFile = "config.json"
     local songs = {}
-    for i, name in ipairs(songNames) do
-        table.insert(songs, {
-            name = name,
-            fn = function()
-                local url = "https://raw.githubusercontent.com/" .. repo .. "/refs/heads/main/" .. name:gsub(" ", "%%20") .. ".dfpwm"
-                return http.get(url).readAll()
+
+    if not fs.exists(configFile) then
+        error("Config file '"..configFile.."' not found. Create it with format: [{ \"name\": \"a\", \"repo\": \"user/repo\" }]")
+    end
+
+    local fh = fs.open(configFile, "r")
+    local cfgContents = fh.readAll()
+    fh.close()
+
+    local ok, cfg = pcall(textutils.unserializeJSON, cfgContents)
+    if not ok or type(cfg) ~= "table" then
+        error("Invalid JSON in '"..configFile.."'")
+    end
+
+    -- For each repo entry in the config, fetch its index.txt and append songs.
+    for _, entry in ipairs(cfg) do
+        if type(entry) == "table" and entry.repo then
+            local repo = entry.repo
+            local displayPrefix = entry.name or repo
+            local indexUrl = "https://raw.githubusercontent.com/" .. repo .. "/main/index.txt"
+            local resp = http.get(indexUrl)
+            if resp then
+                local body = resp.readAll()
+                resp.close()
+                local songNames = textutils.unserialize(body)
+                if type(songNames) == "table" then
+                    for i, name in ipairs(songNames) do
+                        local songName = "["..displayPrefix.."] "..name
+                        table.insert(songs, {
+                            name = songName,
+                            fn = (function(r, n)
+                                return function()
+                                    local url = "https://raw.githubusercontent.com/" .. r .. "/main/" .. n:gsub(" ", "%%20") .. ".dfpwm"
+                                    local rresp = http.get(url)
+                                    if not rresp then error("Failed to fetch "..url) end
+                                    local data = rresp.readAll()
+                                    rresp.close()
+                                    return data
+                                end
+                            end)(repo, name)
+                        })
+                    end
+                end
+            else
+                -- skip repo on HTTP failure
+                print("Warning: failed to fetch index for repo: "..repo)
             end
-        })
+        end
+    end
+
+    if #songs == 0 then
+        error("No songs found in configured repos (check config.json and index.txt files)")
     end
     
     -- ===== Playback state =====
