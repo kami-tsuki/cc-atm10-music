@@ -5,7 +5,7 @@ Quick download commands
 1) Download the whole repo (zip) and extract (Linux/macOS):
 
 ```sh
-wget -O cc-atm10-music.zip https://github.com/kami-tsuki/cc-atm10-music/archive/refs/heads/main.zip && unzip cc-atm10-music.zip && mv cc-atm10-music-main cc-atm10-music
+wget run https://raw.githubusercontent.com/kami-tsuki/cc-atm10-music/main/install.lua
 ```
 
 Notes
