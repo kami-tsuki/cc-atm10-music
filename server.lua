@@ -90,8 +90,8 @@ function(require)
     local volume = .35
     local decoder = dfpwm.make_decoder()
     local currentPage = settings.get("currentPage", 1)
-    -- saved playlist index (1..#playlists) or nil
-    local savedPlaylist = settings.get("playlist", 1)
+    -- saved playlist name (string) if previously stored
+    local savedPlaylistName = settings.get("playlist", nil)
     local width, height = term.getSize()
     local topRows = 2
     local bottomRows = 5 -- reserve bottom 5 lines
@@ -115,31 +115,23 @@ function(require)
     -- Build songs variable from selected playlist (playlist index chosen later)
     local songs = {}
 
-    -- Playlist selection: use savedPlaylist if valid, otherwise prompt user at startup
-    local selectedPlaylist = nil
-    if type(savedPlaylist) == "number" and playlists[savedPlaylist] then
-        selectedPlaylist = savedPlaylist
-    else
-        -- prompt selection
-        term.setBackgroundColor(colors.black)
-        term.setTextColor(colors.white)
-        term.clear()
-        term.setCursorPos(2,1)
-        term.write("Select playlist:\n")
-        for i, p in ipairs(playlists) do
-            term.write(string.format(" %d) %s\n", i, p.name))
-        end
-        term.write("Enter number: ")
-        local ok, input = pcall(term.read)
-        local n = tonumber(input)
-        if type(n) == "number" and playlists[n] then selectedPlaylist = n end
-        if not selectedPlaylist then selectedPlaylist = 1 end
+    -- Playlist selection: accept either a numeric saved index or a saved playlist name.
+    local selectedPlaylistIndex = nil
+    if type(savedPlaylistName) == "number" and playlists[savedPlaylistName] then
+        selectedPlaylistIndex = savedPlaylistName
+    elseif type(savedPlaylistName) == "string" then
+        for i,p in ipairs(playlists) do if p.name == savedPlaylistName then selectedPlaylistIndex = i break end end
     end
 
-    -- Apply selected playlist
-    local playlist = playlists[selectedPlaylist]
+    if not selectedPlaylistIndex then
+        -- default to first playlist if no saved/valid selection
+        selectedPlaylistIndex = 1
+    end
+
+    local playlist = playlists[selectedPlaylistIndex]
     songs = playlist.songs
-    settings.set("playlist", selectedPlaylist)
+    -- persist playlist by name (safer if config order changes)
+    settings.set("playlist", playlist.name)
     settings.save()
 
     -- Restore currentSong from savedName now that `songs` exists
