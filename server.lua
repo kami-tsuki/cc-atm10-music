@@ -102,6 +102,18 @@ function(require)
     local topRows = 2
     local bottomRows = 5 -- reserve bottom 5 lines
     local songsPerPage = height - topRows - bottomRows
+
+    -- Ensure a settings file exists and stored values are non-nil.
+    -- This writes safe defaults so `settings.save()` creates the file on disk.
+    do
+        local _cs_init = (currentSong and currentSong.name) or ""
+        settings.set("currentSong", _cs_init)
+        settings.set("playing", playing)
+        settings.set("shuffle", shuffle)
+        settings.set("loopMode", loopMode)
+        settings.set("currentPage", currentPage)
+        settings.save()
+    end
     
     -- Button storage for click detection
     local buttons = {}
@@ -207,9 +219,15 @@ function(require)
                     else
                         local idx = 1
                         for i,s in ipairs(songs) do if s==currentSong then idx=i end end
-                        if idx<#songs then currentSong = songs[idx+1] else currentSong = nil playing=false end
+                        if idx<#songs then
+                            currentSong = songs[idx+1]
+                        else
+                            currentSong = nil
+                            playing = false
+                        end
                     end
-                    settings.set("currentSong", currentSong and currentSong.name)
+                    local _cs = (currentSong and currentSong.name) or ""
+                    settings.set("currentSong", _cs)
                     settings.set("playing", playing)
                     settings.save()
                 end
@@ -284,7 +302,8 @@ function(require)
                 settings.set("currentPage", currentPage)
                 settings.set("loopMode", loopMode)
                 settings.set("shuffle", shuffle)
-                settings.set("currentSong", currentSong and currentSong.name)
+                local _cs2 = (currentSong and currentSong.name) or ""
+                settings.set("currentSong", _cs2)
                 settings.set("playing", playing)
                 settings.save()
             end
