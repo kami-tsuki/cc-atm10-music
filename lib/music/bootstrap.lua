@@ -1,6 +1,21 @@
 ---@diagnostic disable: undefined-global
 local M = {}
 
+local function currentBaseDir()
+    if shell and shell.getRunningProgram then
+        local program = shell.getRunningProgram()
+        if program and program ~= "" then
+            return fs.getDir(program)
+        end
+    end
+
+    if shell and shell.dir then
+        return shell.dir()
+    end
+
+    return ""
+end
+
 local function modulePath(baseDir, moduleName)
     return fs.combine(baseDir, fs.combine("lib", moduleName:gsub("%.", "/") .. ".lua"))
 end
@@ -36,8 +51,12 @@ local function createRequire(baseDir, nativeRequire)
         end
 
         loading[moduleName] = true
-        local result = chunk()
+        local ok, result = pcall(chunk)
         loading[moduleName] = nil
+
+        if not ok then
+            error(result)
+        end
 
         if result == nil then
             result = true
@@ -51,7 +70,7 @@ local function createRequire(baseDir, nativeRequire)
 end
 
 function M.run(moduleName, ...)
-    local baseDir = shell and shell.dir() or ""
+    local baseDir = currentBaseDir()
     local customRequire = createRequire(baseDir, rawget(_G, "require"))
     _G.require = customRequire
 
