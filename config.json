@@ -1,1 +1,32 @@
-[    { "name": "Cyberpunk", "repo": "GlitchedNetwork/Cyberpunk" },     { "name": "JPOP", "repo": "zerg960/cc" },    { "name": "GLITCHED", "repo": "GlitchedNetwork/GlitchedNetwork001"},    { "name": "Rizzler", "repo": "rizzlerglizzler/music" }, { "name": "GERMANY", "repo": "pocketandtlucas-alt/cc"}]
+[
+	{
+		"name": "Cyberpunk",
+		"repo": "GlitchedNetwork/Cyberpunk",
+		"branch": "main",
+		"index": "index.txt"
+	},
+	{
+		"name": "JPOP",
+		"repo": "zerg960/cc",
+		"branch": "main",
+		"index": "index.txt"
+	},
+	{
+		"name": "GLITCHED",
+		"repo": "GlitchedNetwork/GlitchedNetwork001",
+		"branch": "main",
+		"index": "index.txt"
+	},
+	{
+		"name": "Rizzler",
+		"repo": "rizzlerglizzler/music",
+		"branch": "main",
+		"index": "index.txt"
+	},
+	{
+		"name": "GERMANY",
+		"repo": "pocketandtlucas-alt/cc",
+		"branch": "main",
+		"index": "index.txt"
+	}
+]

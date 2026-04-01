@@ -1,86 +1,102 @@
--- install.lua
--- ComputerCraft installer: download project files into the current computer's folder
--- Usage: run install
-
+---@diagnostic disable: undefined-global
+local repoBase = "https://raw.githubusercontent.com/kami-tsuki/cc-atm10-music/main/"
 local files = {
-  ["startup.lua"] = "https://raw.githubusercontent.com/kami-tsuki/cc-atm10-music/main/startup.lua",
-  }
+    "startup.lua",
+    "server.lua",
+    "client.lua",
+    "README.md",
+    "config.json",
+    "lib/music/bootstrap.lua",
+    "lib/music/util.lua",
+    "lib/music/config.lua",
+    "lib/music/catalog.lua",
+    "lib/music/audio.lua",
+    "lib/music/network.lua",
+    "lib/music/ui.lua",
+    "lib/music/server_app.lua",
+    "lib/music/client_app.lua"
+}
 
-local function okPrint(...) print(...) end
-local function errPrint(...) print(... ) end
+local keepIfPresent = {
+    ["config.json"] = true
+}
+
+local function ensureDir(path)
+    local dir = fs.getDir(path)
+    if dir == "" then
+        return
+    end
+
+    local cursor = ""
+    for part in string.gmatch(dir, "[^/]+") do
+        cursor = cursor == "" and part or fs.combine(cursor, part)
+        if not fs.exists(cursor) then
+            fs.makeDir(cursor)
+        end
+    end
+end
+
+local function download(url, destination)
+    local lastError = "request failed"
+
+    for attempt = 1, 3 do
+        local ok, response = pcall(http.get, url, nil, true)
+        if ok and response then
+            local body = response.readAll()
+            response.close()
+
+            ensureDir(destination)
+            local handle = fs.open(destination, "wb") or fs.open(destination, "w")
+            if not handle then
+                return false, "failed to write " .. destination
+            end
+
+            handle.write(body)
+            handle.close()
+            return true
+        end
+
+        lastError = tostring(response)
+        sleep(0.2 * attempt)
+    end
+
+    return false, lastError
+end
 
 if not http then
-  errPrint("HTTP API is not available. Enable 'enableHttp' in ComputerCraft config.")
-  return
+    error("HTTP API is not available. Enable HTTP in CC: Tweaked before running install.lua.")
 end
 
-local function download(url, dest)
-  local resp = http.get(url)
-  if not resp then return false, "http.get failed" end
-  local data = resp.readAll()
-  resp.close()
-  local fh = fs.open(dest, "w")
-  if not fh then return false, "failed to open "..dest end
-  fh.write(data)
-  fh.close()
-  return true
-end
+print("cc-atm10-music")
+print("Installing runtime files into " .. shell.dir())
+print("")
 
-local function listOptions()
-  print("Files available to download:")
-  local i = 1
-  for name,_ in pairs(files) do
-    print(string.format(" %2d) %s", i, name))
-    i = i + 1
-  end
-  print(" a) all [DEFAULT]")
-  print(" q) quit")
-end
+local failures = {}
 
--- Simple prompt
-print("cc-atm10-music installer")
-listOptions()
-write("Choose file number, 'a' for all, or 'q' to quit: ")
-local choice = read()
-if not choice then choice = "a" return end
-choice = choice:lower()
-
-local toDownload = {}
-if choice == "q" then
-  print("aborted")
-  return
-elseif choice == "a" then
-  for name,_ in pairs(files) do table.insert(toDownload, name) end
-else
-  local n = tonumber(choice)
-  if n then
-    -- map numeric selection to file name
-    local idx = 1
-    for name,_ in pairs(files) do
-      if idx == n then table.insert(toDownload, name) break end
-      idx = idx + 1
-    end
-  end
-end
-
-if #toDownload == 0 then
-  print("No valid selection, aborting")
-  return
-end
-
-for _, name in ipairs(toDownload) do
-  local url = files[name]
-  if not url then
-    print("Unknown file: "..name)
-  else
-    print("Downloading "..name.." ...")
-    local ok, err = download(url, name)
-    if ok then
-      print("Saved: "..name)
+for _, path in ipairs(files) do
+    if keepIfPresent[path] and fs.exists(path) then
+        print("Keeping existing " .. path)
     else
-      print("Failed to download "..name..": "..tostring(err))
+        write("Downloading " .. path .. " ... ")
+        local ok, err = download(repoBase .. path, path)
+        if ok then
+            print("ok")
+        else
+            print("failed")
+            failures[#failures + 1] = path .. ": " .. tostring(err)
+        end
     end
-  end
 end
 
-print("Done. You can now run 'startup' or edit the downloaded files.")
+print("")
+if #failures > 0 then
+    print("Install finished with errors:")
+    for _, failure in ipairs(failures) do
+        print(" - " .. failure)
+    end
+    error("Installation incomplete.")
+end
+
+print("Install complete.")
+print("Run 'startup' on the host player computer.")
+print("Run 'client' on remote speaker nodes.")
