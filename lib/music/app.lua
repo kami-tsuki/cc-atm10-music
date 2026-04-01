@@ -30,6 +30,24 @@ local COMPACT_LOOP_LABELS = {
     [2] = "One"
 }
 
+local ICONS = {
+    play = ">",
+    pause = "||",
+    stop = "[]",
+    prev = "<<",
+    next = ">>",
+    shuffleOn = "<>",
+    shuffleOff = "--",
+    volumeDown = "-",
+    volumeUp = "+"
+}
+
+local LOOP_ICONS = {
+    [0] = "-",
+    [1] = "*",
+    [2] = "1"
+}
+
 local function findDisplay()
     local monitor = peripheral.find("monitor")
     if monitor then
@@ -292,6 +310,30 @@ local function drawButtonRow(ui, y, width, buttons, buttonHeight)
     end
 end
 
+local function drawBottomControlRow(ui, y, width, controls)
+    local gap = 1
+    local totalWidth = -gap
+
+    for _, control in ipairs(controls) do
+        totalWidth = totalWidth + control.width + gap
+    end
+
+    local x = math.max(1, math.floor((width - totalWidth) / 2) + 1)
+    for _, control in ipairs(controls) do
+        if control.kind == "button" then
+            ui:button(control.id, x, y, control.width, control.label, {
+                active = control.active,
+                height = control.height or 2
+            })
+        elseif control.kind == "label" then
+            ui:fill(x, y, control.width, control.height or 2, colors.black, colors.white, " ")
+            ui:centerText(x, y + math.floor(((control.height or 2) - 1) / 2), control.width, control.label, colors.white, colors.black)
+        end
+
+        x = x + control.width + gap
+    end
+end
+
 local function formatPlaylistLabel(item, compact)
     if compact then
         return string.format("%s (%d)", item.name, #item.songs)
@@ -416,34 +458,32 @@ local function render(state)
     ui:fill(1, controlsY, width, footerHeight, colors.black)
 
     local primaryButtons = {
-        { id = "play_pause", label = state.playing and "Pause" or "Play", active = state.playing },
-        { id = "stop", label = "Stop" },
-        { id = "prev_track", label = "Prev" },
-        { id = "next_track", label = "Next" }
+        { id = "prev_track", label = ICONS.prev },
+        { id = "play_pause", label = state.playing and ICONS.pause or ICONS.play, active = state.playing },
+        { id = "stop", label = ICONS.stop },
+        { id = "next_track", label = ICONS.next }
     }
 
     drawButtonRow(ui, controlsY, width, primaryButtons, 2)
 
-    local volumeText = string.format("Vol %d", math.floor(state.volume * 100))
+    local volumeText = string.format("%02d", math.floor(state.volume * 100))
     if compact then
-        ui:button("shuffle", 2, controlsY + 2, 5, state.shuffle and "Shf" or "Seq", {
-            active = state.shuffle,
-            height = 2
+        drawBottomControlRow(ui, controlsY + 2, width, {
+            { kind = "button", id = "shuffle", width = 4, label = state.shuffle and ICONS.shuffleOn or ICONS.shuffleOff, active = state.shuffle },
+            { kind = "button", id = "loop", width = 4, label = LOOP_ICONS[state.loopMode] },
+            { kind = "button", id = "vol_down", width = 3, label = ICONS.volumeDown },
+            { kind = "label", width = 4, label = volumeText },
+            { kind = "button", id = "vol_up", width = 3, label = ICONS.volumeUp }
         })
-        ui:button("loop", 8, controlsY + 2, 5, COMPACT_LOOP_LABELS[state.loopMode], { height = 2 })
-        ui:button("vol_down", width - 11, controlsY + 2, 3, "-", { height = 2 })
-        ui:text(width - 7, controlsY + 3, util.truncate(volumeText, 5), colors.white, colors.black)
-        ui:button("vol_up", width - 3, controlsY + 2, 3, "+", { height = 2 })
     else
-        ui:button("shuffle", 2, controlsY + 2, 8, state.shuffle and "Shuffle" or "Linear", {
-            active = state.shuffle,
-            height = 2
+        drawBottomControlRow(ui, controlsY + 2, width, {
+            { kind = "button", id = "shuffle", width = 5, label = state.shuffle and ICONS.shuffleOn or ICONS.shuffleOff, active = state.shuffle },
+            { kind = "button", id = "loop", width = 5, label = LOOP_ICONS[state.loopMode] },
+            { kind = "button", id = "reload", width = 5, label = "R" },
+            { kind = "button", id = "vol_down", width = 3, label = ICONS.volumeDown },
+            { kind = "label", width = 4, label = volumeText },
+            { kind = "button", id = "vol_up", width = 3, label = ICONS.volumeUp }
         })
-        ui:button("loop", 11, controlsY + 2, 8, COMPACT_LOOP_LABELS[state.loopMode], { height = 2 })
-        ui:button("reload", 20, controlsY + 2, 7, "Reload", { height = 2 })
-        ui:button("vol_down", width - 14, controlsY + 2, 3, "-", { height = 2 })
-        ui:text(width - 10, controlsY + 3, util.truncate(volumeText, 7), colors.white, colors.black)
-        ui:button("vol_up", width - 3, controlsY + 2, 3, "+", { height = 2 })
     end
 
     state.lastRenderClock = clock

@@ -111,7 +111,7 @@ function UI:button(id, x, y, width, label, options)
     local height = math.max(1, options.height or 2)
 
     self:fill(x, y, width, height, bg, fg, " ")
-    self:centerText(x, y + math.floor(height / 2), width, label, fg, bg)
+    self:centerText(x, y + math.floor((height - 1) / 2), width, label, fg, bg)
     self:addHit(id, x, y, x + width - 1, y + height - 1, options.meta)
 end
 
