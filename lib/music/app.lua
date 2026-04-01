@@ -24,6 +24,12 @@ local LOOP_LABELS = {
     [2] = "Loop One"
 }
 
+local COMPACT_LOOP_LABELS = {
+    [0] = "Off",
+    [1] = "All",
+    [2] = "One"
+}
+
 local function findDisplay()
     local monitor = peripheral.find("monitor")
     if monitor then
@@ -270,94 +276,175 @@ local function ensureVisibleSelection(state, visibleRows)
     state.trackScroll = util.clamp(state.trackScroll, 1, maxScroll)
 end
 
+local function drawButtonRow(ui, y, width, buttons, buttonHeight)
+    local gap = 1
+    local innerWidth = math.max(1, width - 2)
+    local buttonWidth = math.max(4, math.floor((innerWidth - ((#buttons - 1) * gap)) / #buttons))
+    local totalWidth = (buttonWidth * #buttons) + ((#buttons - 1) * gap)
+    local x = math.max(2, math.floor((width - totalWidth) / 2) + 1)
+
+    for _, button in ipairs(buttons) do
+        ui:button(button.id, x, y, buttonWidth, button.label, {
+            active = button.active,
+            height = buttonHeight
+        })
+        x = x + buttonWidth + gap
+    end
+end
+
+local function formatPlaylistLabel(item, compact)
+    if compact then
+        return string.format("%s (%d)", item.name, #item.songs)
+    end
+
+    return item.name .. " (" .. #item.songs .. ")"
+end
+
+local function formatTrackLabel(state, item, index, compact)
+    local prefix = index == state.trackIndex and state.playing and ">" or " "
+    if compact then
+        return prefix .. " " .. item.name
+    end
+
+    return prefix .. " " .. item.name
+end
+
 local function render(state)
     local ui = state.ui
     ui:refreshSize()
     ui:resetHits()
 
     local width, height = ui.width, ui.height
-    local playlistPanelWidth = math.max(24, math.floor(width * 0.27))
-    local headerHeight = 3
-    local footerHeight = 5
+    local compact = width < 38
+    local headerHeight = 2
+    local footerHeight = 4
     local bodyY = headerHeight + 1
-    local bodyHeight = math.max(8, height - headerHeight - footerHeight)
-    local rightX = playlistPanelWidth + 1
-    local rightWidth = width - playlistPanelWidth
-    local cardHeight = math.min(8, math.max(6, math.floor(bodyHeight * 0.28)))
-    local tracksY = bodyY + cardHeight
-    local tracksHeight = math.max(6, height - footerHeight - tracksY + 1)
+    local bodyHeight = math.max(6, height - headerHeight - footerHeight)
     local playlist = currentPlaylist(state)
     local track = currentTrack(state)
     local clock = util.safeFormatTime()
 
     ui:fill(1, 1, width, height, ui.theme.background)
     ui:fill(1, 1, width, headerHeight, colors.blue)
-    ui:text(2, 1, "CC ATM10 MUSIC", colors.white, colors.blue)
+    ui:text(2, 1, compact and "CC MUSIC" or "CC ATM10 MUSIC", colors.white, colors.blue)
     ui:text(2, 2, util.truncate(state.status, width - 4), colors.white, colors.blue)
 
     local badgeX = width - 2
     local badges = {
-        state.hasMonitor and "MONITOR" or "TERMINAL",
-        (#state.speakers) .. "SPK",
+        state.hasMonitor and "MON" or "TERM",
+        (#state.speakers) .. "SP",
         clock
     }
 
     for index = #badges, 1, -1 do
         local text = badges[index]
-        badgeX = badgeX - (#text + 2)
+        local badgeWidth = #text + 2
+        if badgeX - badgeWidth < 11 then
+            break
+        end
+        badgeX = badgeX - badgeWidth
         ui:badge(badgeX, 1, text, colors.lightBlue, colors.white)
         badgeX = badgeX - 1
     end
 
-    state.playlistScroll = ui:list("playlists", 1, bodyY, playlistPanelWidth, bodyHeight, state.playlists, state.playlistIndex, state.playlistScroll, {
-        title = "Stations",
-        formatter = function(item)
-            return item.name .. " (" .. #item.songs .. ")"
-        end
-    })
-
-    ui:panel(rightX, bodyY, rightWidth, cardHeight, "Now Playing", colors.cyan)
-    ui:text(rightX + 2, bodyY + 2, util.truncate(track and track.name or "No track selected", rightWidth - 4), colors.white, ui.theme.surface)
-    ui:text(rightX + 2, bodyY + 3, util.truncate(playlist and playlist.name or "No playlist loaded", rightWidth - 4), colors.lightGray, ui.theme.surface)
-    ui:text(rightX + 2, bodyY + 4, util.truncate(LOOP_LABELS[state.loopMode] .. "  |  Shuffle " .. (state.shuffle and "On" or "Off"), rightWidth - 4), colors.lightGray, ui.theme.surface)
-    ui:text(rightX + 2, bodyY + 5, util.truncate(state.lastError or "Click a track, or use the transport controls below.", rightWidth - 4), state.lastError and colors.red or colors.white, ui.theme.surface)
-
     local trackItems = playlist and playlist.songs or {}
-    local visibleTrackRows = math.max(1, tracksHeight - 2)
-    ensureVisibleSelection(state, visibleTrackRows)
-    state.trackScroll = ui:list("tracks", rightX, tracksY, rightWidth, tracksHeight, trackItems, state.selectedTrackIndex, state.trackScroll, {
-        title = "Tracks",
-        formatter = function(item, index)
-            local prefix = index == state.trackIndex and state.playing and "> " or "  "
-            return prefix .. item.name
-        end
-    })
+
+    if compact then
+        local infoHeight = 3
+        local listHeight = math.max(4, bodyHeight - infoHeight)
+        local stationsHeight = math.max(4, math.floor(listHeight * 0.38))
+        local tracksHeight = math.max(4, listHeight - stationsHeight)
+        local stationsY = bodyY + infoHeight
+        local tracksY = stationsY + stationsHeight
+
+        ui:panel(1, bodyY, width, infoHeight, "Now", colors.cyan)
+        ui:text(2, bodyY + 1, util.truncate(track and track.name or "No track selected", width - 2), colors.white, ui.theme.surface)
+
+        local detailLine = state.lastError
+            or ((playlist and playlist.name or "No playlist") .. " | " .. COMPACT_LOOP_LABELS[state.loopMode] .. " | " .. (state.shuffle and "Shf" or "Seq"))
+        ui:text(2, bodyY + 2, util.truncate(detailLine, width - 2), state.lastError and colors.red or colors.lightGray, ui.theme.surface)
+
+        state.playlistScroll = ui:list("playlists", 1, stationsY, width, stationsHeight, state.playlists, state.playlistIndex, state.playlistScroll, {
+            title = "Stations",
+            formatter = function(item)
+                return formatPlaylistLabel(item, true)
+            end
+        })
+
+        local visibleTrackRows = math.max(1, tracksHeight - 1)
+        ensureVisibleSelection(state, visibleTrackRows)
+        state.trackScroll = ui:list("tracks", 1, tracksY, width, tracksHeight, trackItems, state.selectedTrackIndex, state.trackScroll, {
+            title = "Tracks",
+            formatter = function(item, index)
+                return formatTrackLabel(state, item, index, true)
+            end
+        })
+    else
+        local playlistPanelWidth = math.max(14, math.min(22, math.floor(width * 0.34)))
+        local rightX = playlistPanelWidth + 1
+        local rightWidth = width - playlistPanelWidth
+        local infoHeight = 4
+        local tracksY = bodyY + infoHeight
+        local tracksHeight = math.max(4, bodyHeight - infoHeight)
+
+        state.playlistScroll = ui:list("playlists", 1, bodyY, playlistPanelWidth, bodyHeight, state.playlists, state.playlistIndex, state.playlistScroll, {
+            title = "Stations",
+            formatter = function(item)
+                return formatPlaylistLabel(item, false)
+            end
+        })
+
+        ui:panel(rightX, bodyY, rightWidth, infoHeight, "Now Playing", colors.cyan)
+        ui:text(rightX + 1, bodyY + 1, util.truncate(track and track.name or "No track selected", rightWidth - 2), colors.white, ui.theme.surface)
+        ui:text(rightX + 1, bodyY + 2, util.truncate(playlist and playlist.name or "No playlist loaded", rightWidth - 2), colors.lightGray, ui.theme.surface)
+
+        local detailLine = state.lastError
+            or (LOOP_LABELS[state.loopMode] .. " | Shuffle " .. (state.shuffle and "On" or "Off") .. " | Vol " .. math.floor(state.volume * 100) .. "%")
+        ui:text(rightX + 1, bodyY + 3, util.truncate(detailLine, rightWidth - 2), state.lastError and colors.red or colors.lightGray, ui.theme.surface)
+
+        local visibleTrackRows = math.max(1, tracksHeight - 1)
+        ensureVisibleSelection(state, visibleTrackRows)
+        state.trackScroll = ui:list("tracks", rightX, tracksY, rightWidth, tracksHeight, trackItems, state.selectedTrackIndex, state.trackScroll, {
+            title = "Tracks",
+            formatter = function(item, index)
+                return formatTrackLabel(state, item, index, false)
+            end
+        })
+    end
 
     local controlsY = height - footerHeight + 1
     ui:fill(1, controlsY, width, footerHeight, colors.black)
 
-    local buttons = {
+    local primaryButtons = {
         { id = "play_pause", label = state.playing and "Pause" or "Play", active = state.playing },
         { id = "stop", label = "Stop" },
         { id = "prev_track", label = "Prev" },
-        { id = "next_track", label = "Next" },
-        { id = "shuffle", label = state.shuffle and "Shuffle On" or "Shuffle Off", active = state.shuffle },
-        { id = "loop", label = LOOP_LABELS[state.loopMode] },
-        { id = "reload", label = "Reload" }
+        { id = "next_track", label = "Next" }
     }
 
-    local buttonWidth = math.max(10, math.floor((width - 8) / #buttons))
-    local x = 2
-    for _, button in ipairs(buttons) do
-        ui:button(button.id, x, controlsY, buttonWidth - 1, button.label, { active = button.active })
-        x = x + buttonWidth
-    end
+    drawButtonRow(ui, controlsY, width, primaryButtons, 2)
 
-    ui:button("vol_down", 2, controlsY + 3, 8, "-", {})
-    ui:text(12, controlsY + 4, "Volume", colors.white, colors.black)
-    ui:progress(20, controlsY + 4, math.max(10, width - 34), state.volume, colors.green, colors.gray)
-    ui:text(width - 11, controlsY + 4, string.format("%3d%%", math.floor(state.volume * 100)), colors.white, colors.black)
-    ui:button("vol_up", width - 8, controlsY + 3, 7, "+", {})
+    local volumeText = string.format("Vol %d", math.floor(state.volume * 100))
+    if compact then
+        ui:button("shuffle", 2, controlsY + 2, 5, state.shuffle and "Shf" or "Seq", {
+            active = state.shuffle,
+            height = 2
+        })
+        ui:button("loop", 8, controlsY + 2, 5, COMPACT_LOOP_LABELS[state.loopMode], { height = 2 })
+        ui:button("vol_down", width - 11, controlsY + 2, 3, "-", { height = 2 })
+        ui:text(width - 7, controlsY + 3, util.truncate(volumeText, 5), colors.white, colors.black)
+        ui:button("vol_up", width - 3, controlsY + 2, 3, "+", { height = 2 })
+    else
+        ui:button("shuffle", 2, controlsY + 2, 8, state.shuffle and "Shuffle" or "Linear", {
+            active = state.shuffle,
+            height = 2
+        })
+        ui:button("loop", 11, controlsY + 2, 8, COMPACT_LOOP_LABELS[state.loopMode], { height = 2 })
+        ui:button("reload", 20, controlsY + 2, 7, "Reload", { height = 2 })
+        ui:button("vol_down", width - 14, controlsY + 2, 3, "-", { height = 2 })
+        ui:text(width - 10, controlsY + 3, util.truncate(volumeText, 7), colors.white, colors.black)
+        ui:button("vol_up", width - 3, controlsY + 2, 3, "+", { height = 2 })
+    end
 
     state.lastRenderClock = clock
     state.dirty = false

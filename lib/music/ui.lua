@@ -91,15 +91,10 @@ function UI:panel(x, y, width, height, title, accent)
     accent = accent or self.theme.accent
     self:fill(x, y, width, height, self.theme.surface, self.theme.text, " ")
 
-    if width >= 2 and height >= 2 then
+    if height >= 1 then
         self:fill(x, y, width, 1, accent)
-        self:fill(x, y + height - 1, width, 1, accent)
-        self:fill(x, y, 1, height, accent)
-        self:fill(x + width - 1, y, 1, height, accent)
+        self:text(x + 1, y, util.truncate(title or "", math.max(0, width - 2)), self.theme.text, accent)
     end
-
-    local heading = " " .. util.truncate(title or "", math.max(0, width - 2)) .. " "
-    self:text(x + 2, y, heading, self.theme.text, accent)
 end
 
 function UI:badge(x, y, text, background, foreground)
@@ -113,10 +108,11 @@ function UI:button(id, x, y, width, label, options)
     options = options or {}
     local bg = options.active and self.theme.buttonActive or self.theme.button
     local fg = options.foreground or self.theme.buttonText
+    local height = math.max(1, options.height or 2)
 
-    self:fill(x, y, width, 3, bg, fg, " ")
-    self:centerText(x, y + 1, width, label, fg, bg)
-    self:addHit(id, x, y, x + width - 1, y + 2, options.meta)
+    self:fill(x, y, width, height, bg, fg, " ")
+    self:centerText(x, y + math.floor(height / 2), width, label, fg, bg)
+    self:addHit(id, x, y, x + width - 1, y + height - 1, options.meta)
 end
 
 function UI:progress(x, y, width, ratio, fillColor, background)
@@ -137,7 +133,7 @@ function UI:list(id, x, y, width, height, items, selectedIndex, scroll, options)
     local innerX = x + 1
     local innerY = y + 1
     local innerWidth = math.max(1, width - 2)
-    local innerHeight = math.max(1, height - 2)
+    local innerHeight = math.max(1, height - 1)
     local visible = innerHeight
     local maxScroll = math.max(1, #items - visible + 1)
     scroll = util.clamp(scroll or 1, 1, maxScroll)
