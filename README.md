@@ -1,12 +1,8 @@
 # cc-atm10-music
 
-`cc-atm10-music` is a revived CC: Tweaked music player built for ATM10 and other modpacks that include ComputerCraft or CC: Tweaked. The project is split into a server player and one or more remote clients:
+`cc-atm10-music` is a CC: Tweaked music player for ATM10 and similar modpacks. The program is now a single local player application with all runtime logic under `lib/music`.
 
-- `startup` / `server` runs the main music player UI.
-- `client` turns another computer into a remote speaker node.
-- `lib/music/*` contains the full runtime, playlist loading, audio playback, networking, and UI framework.
-
-The player reads playlist definitions from `config.json`, loads song indexes from GitHub repositories, streams `.dfpwm` files over HTTP, and can mirror playback to remote computers through Rednet.
+The player reads playlist definitions from `config.json`, loads song indexes from GitHub repositories, streams `.dfpwm` files over HTTP, and plays them through attached speakers with a monitor-friendly UI.
 
 ## Features
 
@@ -16,7 +12,6 @@ The player reads playlist definitions from `config.json`, loads song indexes fro
 - Playlist browser with a music-player style layout.
 - Shuffle, loop off / loop all / loop one.
 - Local speaker playback.
-- Optional remote speaker clients over Rednet.
 - Support for multiple playlist repositories.
 - Flexible song indexes: JSON, legacy Lua table format, or line-based `index.txt`.
 
@@ -28,7 +23,6 @@ You need:
 
 - CC: Tweaked with HTTP enabled.
 - At least one speaker on the main machine.
-- A modem or ender modem if you want remote clients.
 - A monitor if you want the larger dedicated UI. The player also works directly in the terminal.
 
 ### 2. Install the player
@@ -39,42 +33,21 @@ Run this on the ComputerCraft computer that will host the player:
 wget run https://raw.githubusercontent.com/kami-tsuki/cc-atm10-music/main/install.lua
 ```
 
-The installer is intentionally non-interactive. It downloads the runtime, creates the `lib/music` folder, installs the launchers, and keeps your local `config.json` if it already exists.
+The installer is intentionally non-interactive. It downloads the runtime, creates the `lib/music` folder, removes obsolete server/client files from older versions, and keeps your local `config.json` if it already exists.
 
 Installed files:
 
 - `startup.lua`
-- `server.lua`
-- `client.lua`
 - `config.json`
 - `lib/music/*.lua`
 
-### 3. Start the host player
+### 3. Start the player
 
 After installation:
 
 ```sh
 startup
 ```
-
-You can also run:
-
-```sh
-server
-```
-
-Both commands launch the same host player app.
-
-### 4. Set up remote clients
-
-On another computer with a speaker and modem:
-
-```sh
-wget run https://raw.githubusercontent.com/kami-tsuki/cc-atm10-music/main/install.lua
-client
-```
-
-The client listens for playback commands from the server and plays the same track locally.
 
 ## Using The Player
 
@@ -98,8 +71,7 @@ The client listens for playback commands from the server and plays the same trac
 
 - The player stores playlist, track, volume, and playback settings with the ComputerCraft settings API.
 - Shuffle and loop state are persisted.
-- The server streams tracks from GitHub raw URLs.
-- Clients receive play, stop, and volume messages over the `cc-atm10-music` Rednet protocol.
+- The player streams tracks from GitHub raw URLs.
 
 ## Configuring Playlists
 
@@ -261,9 +233,7 @@ If your `ffmpeg` build does not include the DFPWM codec, convert through a DFPWM
 ## Project Structure
 
 ```text
-startup.lua            Host launcher
-server.lua             Host launcher alias
-client.lua             Remote speaker launcher
+startup.lua            Player launcher
 install.lua            Non-interactive installer
 config.json            Playlist repository config
 lib/music/bootstrap.lua
@@ -271,14 +241,12 @@ lib/music/util.lua
 lib/music/config.lua
 lib/music/catalog.lua
 lib/music/audio.lua
-lib/music/network.lua
 lib/music/ui.lua
-lib/music/server_app.lua
-lib/music/client_app.lua
+lib/music/app.lua
 ```
 
 ## Notes
 
-- The server and clients each download audio directly from GitHub.
+- The player downloads audio directly from GitHub at playback time.
 - If a repo, branch, index, or track path is wrong, the player will surface the load failure in the UI.
 - If you want to preserve a custom local `config.json`, rerunning the installer is safe because it does not overwrite an existing config file.

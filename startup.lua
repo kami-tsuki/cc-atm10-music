@@ -7,4 +7,4 @@ if not fs.exists(bootstrapPath) then
 end
 
 local bootstrap = assert(loadfile(bootstrapPath))()
-bootstrap.run("music.server_app")
+bootstrap.run("music.app")

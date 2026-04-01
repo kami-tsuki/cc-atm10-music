@@ -2,21 +2,20 @@
 local audio = require("music.audio")
 local catalog = require("music.catalog")
 local config = require("music.config")
-local network = require("music.network")
 local UI = require("music.ui")
 local util = require("music.util")
 
 local M = {}
 
 local SETTINGS = {
-    playlist = "ccmusic.server.playlist",
-    track = "ccmusic.server.track",
-    shuffle = "ccmusic.server.shuffle",
-    loopMode = "ccmusic.server.loopMode",
-    volume = "ccmusic.server.volume",
-    playing = "ccmusic.server.playing",
-    trackScroll = "ccmusic.server.trackScroll",
-    playlistScroll = "ccmusic.server.playlistScroll"
+    playlist = "ccmusic.playlist",
+    track = "ccmusic.track",
+    shuffle = "ccmusic.shuffle",
+    loopMode = "ccmusic.loopMode",
+    volume = "ccmusic.volume",
+    playing = "ccmusic.playing",
+    trackScroll = "ccmusic.trackScroll",
+    playlistScroll = "ccmusic.playlistScroll"
 }
 
 local LOOP_LABELS = {
@@ -36,6 +35,13 @@ local function findDisplay()
     return term.current(), false
 end
 
+local function randomSeed()
+    if os.epoch then
+        return os.epoch("utc")
+    end
+    return math.floor(os.clock() * 100000) + os.time()
+end
+
 local function persist(state)
     local playlist = state.playlists[state.playlistIndex]
     local track = playlist and playlist.songs[state.trackIndex] or nil
@@ -49,31 +55,6 @@ local function persist(state)
     settings.set(SETTINGS.trackScroll, state.trackScroll)
     settings.set(SETTINGS.playlistScroll, state.playlistScroll)
     settings.save()
-end
-
-local function broadcastStop(state)
-    state.remote:broadcast({ cmd = "stop" })
-end
-
-local function broadcastVolume(state)
-    state.remote:broadcast({ cmd = "setVolume", volume = state.volume })
-end
-
-local function broadcastPlay(state)
-    local playlist = state.playlists[state.playlistIndex]
-    local track = playlist and playlist.songs[state.trackIndex] or nil
-    if not playlist or not track then
-        return
-    end
-
-    state.remote:broadcast({
-        cmd = "play",
-        playlist = playlist.name,
-        repo = playlist.repo,
-        branch = playlist.branch,
-        name = track.name,
-        file = catalog.trackPath(track)
-    })
 end
 
 local function currentPlaylist(state)
@@ -116,7 +97,6 @@ local function makeState(playlists, warnings)
         playbackToken = 0,
         status = "Ready",
         lastError = nil,
-        remote = network.open("cc-atm10-music"),
         speakers = audio.findSpeakers(),
         dirty = true,
         lastRenderClock = nil,
@@ -177,7 +157,6 @@ end
 local function interruptPlayback(state, keepPlaying)
     state.playbackToken = state.playbackToken + 1
     state.playing = keepPlaying
-    broadcastStop(state)
     state.dirty = true
     persist(state)
 end
@@ -245,7 +224,6 @@ end
 local function adjustVolume(state, delta)
     state.volume = util.clamp(state.volume + delta, 0, 1)
     state.status = string.format("Volume %.0f%%", state.volume * 100)
-    broadcastVolume(state)
     state.dirty = true
     persist(state)
 end
@@ -319,7 +297,6 @@ local function render(state)
 
     local badgeX = width - 2
     local badges = {
-        state.remote.available and "REDNET" or "LOCAL ONLY",
         state.hasMonitor and "MONITOR" or "TERMINAL",
         (#state.speakers) .. "SPK",
         clock
@@ -328,7 +305,7 @@ local function render(state)
     for index = #badges, 1, -1 do
         local text = badges[index]
         badgeX = badgeX - (#text + 2)
-        ui:badge(badgeX, 1, text, index == 1 and colors.green or colors.lightBlue, colors.white)
+        ui:badge(badgeX, 1, text, colors.lightBlue, colors.white)
         badgeX = badgeX - 1
     end
 
@@ -470,12 +447,10 @@ local function playerLoop(state)
                 state.lastError = tostring(dataOrError)
                 state.playing = false
                 state.dirty = true
-                broadcastStop(state)
                 persist(state)
             else
                 state.status = "Playing " .. track.name
                 state.dirty = true
-                broadcastPlay(state)
                 persist(state)
 
                 local completed = audio.playData(dataOrError, state.speakers, function()
@@ -489,7 +464,6 @@ local function playerLoop(state)
                     advanceTrack(state)
                     if not state.playing then
                         state.status = "Queue ended"
-                        broadcastStop(state)
                     end
                     persist(state)
                     state.dirty = true
@@ -531,7 +505,7 @@ local function inputLoop(state)
 end
 
 function M.run()
-    math.randomseed(os.epoch("utc"))
+    math.randomseed(randomSeed())
 
     if not http then
         error("HTTP API is required for remote playlists.")

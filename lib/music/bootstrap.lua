@@ -1,27 +1,61 @@
 ---@diagnostic disable: undefined-global
 local M = {}
 
-local function appendPath(fragment)
-    if not package or not package.path then
-        error("Lua package.path is unavailable in this environment.")
-    end
-
-    if not string.find(package.path, fragment, 1, true) then
-        package.path = package.path .. ";" .. fragment
-    end
+local function modulePath(baseDir, moduleName)
+    return fs.combine(baseDir, fs.combine("lib", moduleName:gsub("%.", "/") .. ".lua"))
 end
 
-local function configurePackagePath(baseDir)
-    local libRoot = fs.combine(baseDir, "lib")
-    appendPath(fs.combine(libRoot, "?.lua"))
-    appendPath(fs.combine(libRoot, "?/init.lua"))
+local function createRequire(baseDir, nativeRequire)
+    local cache = {}
+    local loading = {}
+
+    local function customRequire(moduleName)
+        if cache[moduleName] ~= nil then
+            return cache[moduleName]
+        end
+
+        if not moduleName:match("^music%.") then
+            if nativeRequire then
+                return nativeRequire(moduleName)
+            end
+            error("No native require is available for module '" .. tostring(moduleName) .. "'.")
+        end
+
+        if loading[moduleName] then
+            error("Circular module load detected for '" .. moduleName .. "'.")
+        end
+
+        local path = modulePath(baseDir, moduleName)
+        if not fs.exists(path) then
+            error("Module file not found: " .. path)
+        end
+
+        local chunk, err = loadfile(path)
+        if not chunk then
+            error("Failed to load module '" .. moduleName .. "': " .. tostring(err))
+        end
+
+        loading[moduleName] = true
+        local result = chunk()
+        loading[moduleName] = nil
+
+        if result == nil then
+            result = true
+        end
+
+        cache[moduleName] = result
+        return result
+    end
+
+    return customRequire
 end
 
 function M.run(moduleName, ...)
     local baseDir = shell and shell.dir() or ""
-    configurePackagePath(baseDir)
+    local customRequire = createRequire(baseDir, rawget(_G, "require"))
+    _G.require = customRequire
 
-    local entry = require(moduleName)
+    local entry = customRequire(moduleName)
     if type(entry) == "table" and type(entry.run) == "function" then
         return entry.run(...)
     end

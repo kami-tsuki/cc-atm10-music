@@ -2,8 +2,6 @@
 local repoBase = "https://raw.githubusercontent.com/kami-tsuki/cc-atm10-music/main/"
 local files = {
     "startup.lua",
-    "server.lua",
-    "client.lua",
     "README.md",
     "config.json",
     "lib/music/bootstrap.lua",
@@ -11,8 +9,14 @@ local files = {
     "lib/music/config.lua",
     "lib/music/catalog.lua",
     "lib/music/audio.lua",
-    "lib/music/network.lua",
     "lib/music/ui.lua",
+    "lib/music/app.lua"
+}
+
+local obsoleteFiles = {
+    "server.lua",
+    "client.lua",
+    "lib/music/network.lua",
     "lib/music/server_app.lua",
     "lib/music/client_app.lua"
 }
@@ -73,6 +77,17 @@ print("")
 
 local failures = {}
 
+for _, path in ipairs(obsoleteFiles) do
+    if fs.exists(path) then
+        fs.delete(path)
+        print("Removed obsolete " .. path)
+    end
+end
+
+if #obsoleteFiles > 0 then
+    print("")
+end
+
 for _, path in ipairs(files) do
     if keepIfPresent[path] and fs.exists(path) then
         print("Keeping existing " .. path)
@@ -98,5 +113,4 @@ if #failures > 0 then
 end
 
 print("Install complete.")
-print("Run 'startup' on the host player computer.")
-print("Run 'client' on remote speaker nodes.")
+print("Run 'startup' to launch the music player.")
