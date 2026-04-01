@@ -33,7 +33,7 @@ local function listOptions()
     print(string.format(" %2d) %s", i, name))
     i = i + 1
   end
-  print(" a) all")
+  print(" a) all [DEFAULT]")
   print(" q) quit")
 end
 
@@ -42,7 +42,7 @@ print("cc-atm10-music installer")
 listOptions()
 write("Choose file number, 'a' for all, or 'q' to quit: ")
 local choice = read()
-if not choice then print("no selection, aborting") return end
+if not choice then choice = "a" return end
 choice = choice:lower()
 
 local toDownload = {}
