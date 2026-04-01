@@ -1,6 +1,13 @@
 ---@diagnostic disable: undefined-global
 local M = {}
 
+local ROM_MODULE_ROOTS = {
+    "rom/modules/main",
+    "rom/modules/turtle",
+    "rom/modules/command",
+    "rom/modules/pocket"
+}
+
 local function currentBaseDir()
     if shell and shell.getRunningProgram then
         local program = shell.getRunningProgram()
@@ -16,8 +23,29 @@ local function currentBaseDir()
     return ""
 end
 
-local function modulePath(baseDir, moduleName)
-    return fs.combine(baseDir, fs.combine("lib", moduleName:gsub("%.", "/") .. ".lua"))
+local function modulePaths(baseDir, moduleName)
+    local relativePath = moduleName:gsub("%.", "/")
+    local candidates = {
+        fs.combine(baseDir, fs.combine("lib", relativePath .. ".lua")),
+        fs.combine(baseDir, fs.combine("lib", fs.combine(relativePath, "init.lua")))
+    }
+
+    for _, root in ipairs(ROM_MODULE_ROOTS) do
+        candidates[#candidates + 1] = fs.combine(root, relativePath .. ".lua")
+        candidates[#candidates + 1] = fs.combine(root, fs.combine(relativePath, "init.lua"))
+    end
+
+    return candidates
+end
+
+local function resolveModulePath(baseDir, moduleName)
+    for _, path in ipairs(modulePaths(baseDir, moduleName)) do
+        if fs.exists(path) and not fs.isDir(path) then
+            return path
+        end
+    end
+
+    return nil
 end
 
 local function createRequire(baseDir, nativeRequire)
@@ -29,20 +57,21 @@ local function createRequire(baseDir, nativeRequire)
             return cache[moduleName]
         end
 
-        if not moduleName:match("^music%.") then
-            if nativeRequire then
-                return nativeRequire(moduleName)
+        if nativeRequire then
+            local ok, result = pcall(nativeRequire, moduleName)
+            if ok then
+                cache[moduleName] = result
+                return result
             end
-            error("No native require is available for module '" .. tostring(moduleName) .. "'.")
         end
 
         if loading[moduleName] then
             error("Circular module load detected for '" .. moduleName .. "'.")
         end
 
-        local path = modulePath(baseDir, moduleName)
-        if not fs.exists(path) then
-            error("Module file not found: " .. path)
+        local path = resolveModulePath(baseDir, moduleName)
+        if not path then
+            error("Module file not found for '" .. moduleName .. "'.")
         end
 
         local chunk, err = loadfile(path)
