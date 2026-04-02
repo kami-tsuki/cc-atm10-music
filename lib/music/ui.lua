@@ -7,10 +7,10 @@ UI.__index = UI
 local defaultTheme = {
     background = colors.black,
     surface = colors.gray,
-    surfaceAlt = colors.gray,
+    surfaceAlt = colors.lightGray,
     text = colors.white,
-    accent = colors.lightGray,
-    selected = colors.gray,
+    accent = colors.cyan,
+    selected = colors.blue,
     selectedText = colors.white,
     button = colors.gray,
     buttonActive = colors.green,
@@ -128,12 +128,19 @@ function UI:list(id, x, y, width, height, items, selectedIndex, scroll, options)
     options = options or {}
     items = items or {}
 
-    self:panel(x, y, width, height, options.title or "List", options.accent)
+    local innerX = x
+    local innerY = y
+    local innerWidth = width
+    local innerHeight = height
 
-    local innerX = x + 1
-    local innerY = y + 1
-    local innerWidth = math.max(1, width - 2)
-    local innerHeight = math.max(1, height - 1)
+    if not options.plain then
+        self:panel(x, y, width, height, options.title or "List", options.accent)
+        innerX = x + 1
+        innerY = y + 1
+        innerWidth = math.max(1, width - 2)
+        innerHeight = math.max(1, height - 1)
+    end
+
     local visible = innerHeight
     local maxScroll = math.max(1, #items - visible + 1)
     scroll = util.clamp(scroll or 1, 1, maxScroll)
@@ -162,8 +169,8 @@ function UI:list(id, x, y, width, height, items, selectedIndex, scroll, options)
         })
     end
 
-    if #items > visible and width >= 4 then
-        local barX = x + width - 2
+    if #items > visible and innerWidth >= 2 then
+        local barX = innerX + innerWidth - 1
         self:fill(barX, innerY, 1, innerHeight, self.theme.surfaceAlt)
 
         local knobSize = math.max(1, math.floor(innerHeight * (visible / #items) + 0.5))

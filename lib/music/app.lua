@@ -24,13 +24,9 @@ local LOOP_LABELS = {
     [2] = "Loop One"
 }
 
-local COMPACT_LOOP_LABELS = {
-    [0] = "Off",
-    [1] = "All",
-    [2] = "One"
-}
-
 local ICONS = {
+    pagePlaylists = "<",
+    pageTracks = ">",
     play = ">",
     pause = "||",
     stop = "[]",
@@ -38,6 +34,7 @@ local ICONS = {
     next = ">>",
     shuffleOn = "<>",
     shuffleOff = "--",
+    reload = "R",
     volumeDown = "-",
     volumeUp = "+"
 }
@@ -110,6 +107,7 @@ local function makeState(playlists, warnings)
         playlists = playlists,
         warnings = warnings,
         playlistIndex = util.findIndexByField(playlists, "name", playlistName) or 1,
+        browserPlaylistIndex = util.findIndexByField(playlists, "name", playlistName) or 1,
         trackIndex = 1,
         selectedTrackIndex = 1,
         shuffle = settings.get(SETTINGS.shuffle, true),
@@ -125,6 +123,7 @@ local function makeState(playlists, warnings)
         dirty = true,
         lastRenderClock = nil,
         hasMonitor = false,
+        page = playlistName ~= "" and "tracks" or "playlists",
         ui = nil,
         display = nil
     }
@@ -192,6 +191,7 @@ local function setPlaylist(state, index)
     end
 
     state.playlistIndex = index
+    state.browserPlaylistIndex = index
     state.trackIndex = 1
     state.selectedTrackIndex = 1
     state.trackScroll = 1
@@ -199,6 +199,25 @@ local function setPlaylist(state, index)
     state.lastError = nil
     ensureTrackSelection(state)
     interruptPlayback(state, false)
+end
+
+local function openPlaylist(state, index)
+    local playlist = state.playlists[index]
+    if not playlist then
+        return
+    end
+
+    if state.playlistIndex ~= index then
+        setPlaylist(state, index)
+    else
+        state.browserPlaylistIndex = index
+        ensureTrackSelection(state)
+        state.dirty = true
+    end
+
+    state.page = "tracks"
+    state.status = "Playlist: " .. playlist.name
+    persist(state)
 end
 
 local function playSelected(state)
@@ -264,6 +283,7 @@ local function reloadCatalog(state)
     state.playlists = playlists
     state.warnings = warnings
     state.playlistIndex = util.findIndexByField(playlists, "name", currentPlaylistName) or 1
+    state.browserPlaylistIndex = state.playlistIndex
     local playlist = currentPlaylist(state)
     state.trackIndex = playlist and (util.findIndexByField(playlist.songs, "name", currentTrackName) or 1) or 1
     state.selectedTrackIndex = state.trackIndex
@@ -282,73 +302,73 @@ local function ensureVisibleSelection(state, visibleRows)
         return
     end
 
-    local maxScroll = math.max(1, #playlist.songs - visibleRows + 1)
-    state.trackScroll = util.clamp(state.trackScroll, 1, maxScroll)
+    if not state.selectedTrackIndex then
+        state.selectedTrackIndex = 1
+    end
 
+    local maxScroll = math.max(1, #playlist.songs - visibleRows + 1)
+    state.trackScroll = util.clamp(state.trackScroll or 1, 1, maxScroll)
     if state.selectedTrackIndex < state.trackScroll then
         state.trackScroll = state.selectedTrackIndex
     elseif state.selectedTrackIndex >= state.trackScroll + visibleRows then
         state.trackScroll = state.selectedTrackIndex - visibleRows + 1
     end
-
-    state.trackScroll = util.clamp(state.trackScroll, 1, maxScroll)
 end
 
-local function drawButtonRow(ui, y, width, buttons, buttonHeight)
-    local gap = 1
-    local innerWidth = math.max(1, width - 2)
-    local buttonWidth = math.max(4, math.floor((innerWidth - ((#buttons - 1) * gap)) / #buttons))
-    local totalWidth = (buttonWidth * #buttons) + ((#buttons - 1) * gap)
-    local x = math.max(2, math.floor((width - totalWidth) / 2) + 1)
-
-    for _, button in ipairs(buttons) do
-        ui:button(button.id, x, y, buttonWidth, button.label, {
-            active = button.active,
-            height = buttonHeight
-        })
-        x = x + buttonWidth + gap
-    end
-end
-
-local function drawBottomControlRow(ui, y, width, controls)
-    local gap = 1
-    local totalWidth = -gap
-
-    for _, control in ipairs(controls) do
-        totalWidth = totalWidth + control.width + gap
-    end
-
-    local x = math.max(1, math.floor((width - totalWidth) / 2) + 1)
-    for _, control in ipairs(controls) do
-        if control.kind == "button" then
-            ui:button(control.id, x, y, control.width, control.label, {
-                active = control.active,
-                height = control.height or 2
-            })
-        elseif control.kind == "label" then
-            ui:fill(x, y, control.width, control.height or 2, colors.black, colors.white, " ")
-            ui:centerText(x, y + math.floor(((control.height or 2) - 1) / 2), control.width, control.label, colors.white, colors.black)
-        end
-
-        x = x + control.width + gap
-    end
-end
-
-local function formatPlaylistLabel(item, compact)
-    if compact then
-        return string.format("%s (%d)", item.name, #item.songs)
-    end
-
+local function formatPlaylistLabel(item)
     return item.name .. " (" .. #item.songs .. ")"
 end
 
-local function formatTrackLabel(state, item, index, compact)
+local function formatTrackLabel(state, item, index)
     local prefix = index == state.trackIndex and state.playing and ">" or " "
-    if compact then
-        return prefix .. " " .. item.name
+    return prefix .. " " .. item.name
+end
+
+local function drawControlStrip(ui, y, width, controls)
+    local totalRequested = 0
+    for _, control in ipairs(controls) do
+        totalRequested = totalRequested + control.width
     end
 
-    return prefix .. " " .. item.name
+    local remaining = math.max(0, width - totalRequested)
+    local x = 1
+
+    for _, control in ipairs(controls) do
+        local drawWidth = control.width
+        if remaining > 0 then
+            drawWidth = drawWidth + 1
+            remaining = remaining - 1
+        end
+
+        if control.kind == "label" then
+            ui:fill(x, y, drawWidth, 1, colors.black, colors.white, " ")
+            ui:centerText(x, y, drawWidth, control.label, colors.white, colors.black)
+        else
+            ui:button(control.id, x, y, drawWidth, control.label, {
+                active = control.active,
+                height = 1
+            })
+        end
+
+        x = x + drawWidth
+    end
+end
+
+local function currentTitle(state)
+    if state.page == "playlists" then
+        return "Playlist Selection"
+    end
+
+    local playlist = currentPlaylist(state)
+    return playlist and playlist.name or "No Playlist"
+end
+
+local function currentActionText(state)
+    if state.lastError and state.lastError ~= "" then
+        return state.lastError
+    end
+
+    return state.status or "Ready"
 end
 
 local function render(state)
@@ -357,134 +377,66 @@ local function render(state)
     ui:resetHits()
 
     local width, height = ui.width, ui.height
-    local compact = width < 38
-    local headerHeight = 2
-    local footerHeight = 4
-    local bodyY = headerHeight + 1
-    local bodyHeight = math.max(6, height - headerHeight - footerHeight)
+    local listY = 4
+    local footerHeight = 3
+    local listHeight = math.max(1, height - listY - footerHeight + 1)
     local playlist = currentPlaylist(state)
-    local track = currentTrack(state)
     local clock = util.safeFormatTime()
+    local pageIsTracks = state.page == "tracks"
+    local title = currentTitle(state)
 
     ui:fill(1, 1, width, height, ui.theme.background)
-    ui:fill(1, 1, width, headerHeight, colors.blue)
-    ui:text(2, 1, compact and "CC MUSIC" or "CC ATM10 MUSIC", colors.white, colors.blue)
-    ui:text(2, 2, util.truncate(state.status, width - 4), colors.white, colors.blue)
+    ui:fill(1, 1, width, 1, colors.blue)
+    ui:text(1, 1, util.truncate("KAMI-RADIO 2.0", math.max(1, width - #clock - 1)), colors.white, colors.blue)
+    ui:text(math.max(1, width - #clock + 1), 1, clock, colors.white, colors.blue)
+    ui:text(1, 3, util.truncate(title, width), colors.white, colors.black)
+    ui:addHit("title_action", 1, 3, width, 3, {
+        kind = "title_action"
+    })
 
-    local badgeX = width - 2
-    local badges = {
-        state.hasMonitor and "MON" or "TERM",
-        (#state.speakers) .. "SP",
-        clock
-    }
-
-    for index = #badges, 1, -1 do
-        local text = badges[index]
-        local badgeWidth = #text + 2
-        if badgeX - badgeWidth < 11 then
-            break
-        end
-        badgeX = badgeX - badgeWidth
-        ui:badge(badgeX, 1, text, colors.lightBlue, colors.white)
-        badgeX = badgeX - 1
-    end
-
-    local trackItems = playlist and playlist.songs or {}
-
-    if compact then
-        local infoHeight = 3
-        local listHeight = math.max(4, bodyHeight - infoHeight)
-        local stationsHeight = math.max(4, math.floor(listHeight * 0.38))
-        local tracksHeight = math.max(4, listHeight - stationsHeight)
-        local stationsY = bodyY + infoHeight
-        local tracksY = stationsY + stationsHeight
-
-        ui:panel(1, bodyY, width, infoHeight, "Now", colors.cyan)
-        ui:text(2, bodyY + 1, util.truncate(track and track.name or "No track selected", width - 2), colors.white, ui.theme.surface)
-
-        local detailLine = state.lastError
-            or ((playlist and playlist.name or "No playlist") .. " | " .. COMPACT_LOOP_LABELS[state.loopMode] .. " | " .. (state.shuffle and "Shf" or "Seq"))
-        ui:text(2, bodyY + 2, util.truncate(detailLine, width - 2), state.lastError and colors.red or colors.lightGray, ui.theme.surface)
-
-        state.playlistScroll = ui:list("playlists", 1, stationsY, width, stationsHeight, state.playlists, state.playlistIndex, state.playlistScroll, {
-            title = "Stations",
-            formatter = function(item)
-                return formatPlaylistLabel(item, true)
-            end
-        })
-
-        local visibleTrackRows = math.max(1, tracksHeight - 1)
-        ensureVisibleSelection(state, visibleTrackRows)
-        state.trackScroll = ui:list("tracks", 1, tracksY, width, tracksHeight, trackItems, state.selectedTrackIndex, state.trackScroll, {
-            title = "Tracks",
+    if pageIsTracks then
+        local trackItems = playlist and playlist.songs or {}
+        ensureVisibleSelection(state, listHeight)
+        state.trackScroll = ui:list("tracks", 1, listY, width, listHeight, trackItems, state.selectedTrackIndex, state.trackScroll, {
+            plain = true,
             formatter = function(item, index)
-                return formatTrackLabel(state, item, index, true)
+                return formatTrackLabel(state, item, index)
             end
         })
     else
-        local playlistPanelWidth = math.max(14, math.min(22, math.floor(width * 0.34)))
-        local rightX = playlistPanelWidth + 1
-        local rightWidth = width - playlistPanelWidth
-        local infoHeight = 4
-        local tracksY = bodyY + infoHeight
-        local tracksHeight = math.max(4, bodyHeight - infoHeight)
+        local visibleRows = math.max(1, listHeight)
+        local maxScroll = math.max(1, #state.playlists - visibleRows + 1)
+        state.playlistScroll = util.clamp(state.playlistScroll or 1, 1, maxScroll)
+        if state.browserPlaylistIndex < state.playlistScroll then
+            state.playlistScroll = state.browserPlaylistIndex
+        elseif state.browserPlaylistIndex >= state.playlistScroll + visibleRows then
+            state.playlistScroll = state.browserPlaylistIndex - visibleRows + 1
+        end
 
-        state.playlistScroll = ui:list("playlists", 1, bodyY, playlistPanelWidth, bodyHeight, state.playlists, state.playlistIndex, state.playlistScroll, {
-            title = "Stations",
+        state.playlistScroll = ui:list("playlists", 1, listY, width, listHeight, state.playlists, state.browserPlaylistIndex, state.playlistScroll, {
+            plain = true,
             formatter = function(item)
-                return formatPlaylistLabel(item, false)
-            end
-        })
-
-        ui:panel(rightX, bodyY, rightWidth, infoHeight, "Now Playing", colors.cyan)
-        ui:text(rightX + 1, bodyY + 1, util.truncate(track and track.name or "No track selected", rightWidth - 2), colors.white, ui.theme.surface)
-        ui:text(rightX + 1, bodyY + 2, util.truncate(playlist and playlist.name or "No playlist loaded", rightWidth - 2), colors.lightGray, ui.theme.surface)
-
-        local detailLine = state.lastError
-            or (LOOP_LABELS[state.loopMode] .. " | Shuffle " .. (state.shuffle and "On" or "Off") .. " | Vol " .. math.floor(state.volume * 100) .. "%")
-        ui:text(rightX + 1, bodyY + 3, util.truncate(detailLine, rightWidth - 2), state.lastError and colors.red or colors.lightGray, ui.theme.surface)
-
-        local visibleTrackRows = math.max(1, tracksHeight - 1)
-        ensureVisibleSelection(state, visibleTrackRows)
-        state.trackScroll = ui:list("tracks", rightX, tracksY, rightWidth, tracksHeight, trackItems, state.selectedTrackIndex, state.trackScroll, {
-            title = "Tracks",
-            formatter = function(item, index)
-                return formatTrackLabel(state, item, index, false)
+                return formatPlaylistLabel(item)
             end
         })
     end
-
-    local controlsY = height - footerHeight + 1
-    ui:fill(1, controlsY, width, footerHeight, colors.black)
-
-    local primaryButtons = {
-        { id = "prev_track", label = ICONS.prev },
-        { id = "play_pause", label = state.playing and ICONS.pause or ICONS.play, active = state.playing },
-        { id = "stop", label = ICONS.stop },
-        { id = "next_track", label = ICONS.next }
-    }
-
-    drawButtonRow(ui, controlsY, width, primaryButtons, 2)
 
     local volumeText = string.format("%02d", math.floor(state.volume * 100))
-    if compact then
-        drawBottomControlRow(ui, controlsY + 2, width, {
-            { kind = "button", id = "shuffle", width = 4, label = state.shuffle and ICONS.shuffleOn or ICONS.shuffleOff, active = state.shuffle },
-            { kind = "button", id = "loop", width = 4, label = LOOP_ICONS[state.loopMode] },
-            { kind = "button", id = "vol_down", width = 3, label = ICONS.volumeDown },
-            { kind = "label", width = 4, label = volumeText },
-            { kind = "button", id = "vol_up", width = 3, label = ICONS.volumeUp }
-        })
-    else
-        drawBottomControlRow(ui, controlsY + 2, width, {
-            { kind = "button", id = "shuffle", width = 5, label = state.shuffle and ICONS.shuffleOn or ICONS.shuffleOff, active = state.shuffle },
-            { kind = "button", id = "loop", width = 5, label = LOOP_ICONS[state.loopMode] },
-            { kind = "button", id = "reload", width = 5, label = "R" },
-            { kind = "button", id = "vol_down", width = 3, label = ICONS.volumeDown },
-            { kind = "label", width = 4, label = volumeText },
-            { kind = "button", id = "vol_up", width = 3, label = ICONS.volumeUp }
-        })
-    end
+    drawControlStrip(ui, height - 2, width, {
+        { id = "prev_track", width = 4, label = ICONS.prev },
+        { id = "play_pause", width = 4, label = state.playing and ICONS.pause or ICONS.play, active = state.playing },
+        { id = "stop", width = 4, label = ICONS.stop },
+        { id = "next_track", width = 4, label = ICONS.next }
+    })
+    drawControlStrip(ui, height - 1, width, {
+        { id = "shuffle", width = 4, label = state.shuffle and ICONS.shuffleOn or ICONS.shuffleOff, active = state.shuffle },
+        { id = "loop", width = 4, label = LOOP_ICONS[state.loopMode] },
+        { id = "vol_down", width = 4, label = ICONS.volumeDown },
+        { kind = "label", width = 5, label = volumeText },
+        { id = "vol_up", width = 4, label = ICONS.volumeUp }
+    })
+    ui:fill(1, height, width, 1, colors.blue, colors.white, " ")
+    ui:text(1, height, util.truncate(currentActionText(state), width), colors.white, colors.blue)
 
     state.lastRenderClock = clock
     state.dirty = false
@@ -497,10 +449,19 @@ local function handleClick(state, x, y)
     end
 
     if hit.id == "playlists" and hit.meta and hit.meta.index then
-        setPlaylist(state, hit.meta.index)
+        state.browserPlaylistIndex = hit.meta.index
+        openPlaylist(state, hit.meta.index)
     elseif hit.id == "tracks" and hit.meta and hit.meta.index then
         state.selectedTrackIndex = hit.meta.index
         playSelected(state)
+    elseif hit.id == "title_action" then
+        if state.page == "tracks" then
+            state.page = "playlists"
+            state.browserPlaylistIndex = state.playlistIndex
+        else
+            openPlaylist(state, state.browserPlaylistIndex or state.playlistIndex)
+        end
+        state.dirty = true
     elseif hit.id == "play_pause" then
         togglePlayPause(state)
     elseif hit.id == "stop" then
@@ -519,8 +480,6 @@ local function handleClick(state, x, y)
         state.status = LOOP_LABELS[state.loopMode]
         state.dirty = true
         persist(state)
-    elseif hit.id == "reload" then
-        reloadCatalog(state)
     elseif hit.id == "vol_down" then
         adjustVolume(state, -0.05)
     elseif hit.id == "vol_up" then
@@ -530,6 +489,22 @@ end
 
 local function handleKey(state, key)
     local playlist = currentPlaylist(state)
+    if state.page == "playlists" then
+        if key == keys.up and state.browserPlaylistIndex > 1 then
+            state.browserPlaylistIndex = state.browserPlaylistIndex - 1
+            state.dirty = true
+        elseif key == keys.down and state.browserPlaylistIndex < #state.playlists then
+            state.browserPlaylistIndex = state.browserPlaylistIndex + 1
+            state.dirty = true
+        elseif key == keys.enter then
+            openPlaylist(state, state.browserPlaylistIndex)
+        elseif key == keys.left or key == keys.right then
+            state.page = "tracks"
+            state.dirty = true
+        end
+        return
+    end
+
     if key == keys.up and playlist and state.selectedTrackIndex and state.selectedTrackIndex > 1 then
         state.selectedTrackIndex = state.selectedTrackIndex - 1
         state.dirty = true
@@ -540,6 +515,10 @@ local function handleKey(state, key)
         persist(state)
     elseif key == keys.enter then
         playSelected(state)
+    elseif key == keys.backspace then
+        state.page = "playlists"
+        state.browserPlaylistIndex = state.playlistIndex
+        state.dirty = true
     elseif key == keys.space then
         togglePlayPause(state)
     elseif key == keys.leftBracket then
