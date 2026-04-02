@@ -9,14 +9,19 @@ local defaultTheme = {
     surface = colors.gray,
     surfaceAlt = colors.lightGray,
     text = colors.white,
-    accent = colors.cyan,
-    selected = colors.blue,
+    accent = colors.pink,
+    selected = colors.magenta,
     selectedText = colors.white,
     button = colors.gray,
-    buttonActive = colors.green,
+    buttonActive = colors.purple,
     buttonText = colors.white,
-    progress = colors.green,
-    progressBackground = colors.gray
+    progress = colors.magenta,
+    progressBackground = colors.gray,
+    header = colors.purple,
+    titleBar = colors.gray,
+    actionBar = colors.magenta,
+    label = colors.lightGray,
+    labelText = colors.white
 }
 
 function UI.new(target, theme)
@@ -143,6 +148,8 @@ function UI:list(id, x, y, width, height, items, selectedIndex, scroll, options)
 
     local visible = innerHeight
     local maxScroll = math.max(1, #items - visible + 1)
+    local hasScrollbar = #items > visible and innerWidth >= 2
+    local contentWidth = hasScrollbar and (innerWidth - 1) or innerWidth
     scroll = util.clamp(scroll or 1, 1, maxScroll)
 
     self:fill(innerX, innerY, innerWidth, innerHeight, options.background or self.theme.surface, self.theme.text, " ")
@@ -161,15 +168,15 @@ function UI:list(id, x, y, width, height, items, selectedIndex, scroll, options)
         local targetY = innerY + row - 1
 
         self:fill(innerX, targetY, innerWidth, 1, background, foreground, " ")
-        self:text(innerX + 1, targetY, util.truncate(label, math.max(0, innerWidth - 2)), foreground, background)
-        self:addHit(id, innerX, targetY, innerX + innerWidth - 1, targetY, {
+        self:text(innerX + 1, targetY, util.truncate(label, math.max(0, contentWidth - 2)), foreground, background)
+        self:addHit(id, innerX, targetY, innerX + contentWidth - 1, targetY, {
             kind = "list",
             index = index,
             item = item
         })
     end
 
-    if #items > visible and innerWidth >= 2 then
+    if hasScrollbar then
         local barX = innerX + innerWidth - 1
         self:fill(barX, innerY, 1, innerHeight, self.theme.surfaceAlt)
 
@@ -180,6 +187,15 @@ function UI:list(id, x, y, width, height, items, selectedIndex, scroll, options)
             knobOffset = math.floor(((scroll - 1) / (maxScroll - 1)) * knobRange + 0.5)
         end
         self:fill(barX, innerY + knobOffset, 1, knobSize, self.theme.accent)
+
+        for row = 1, innerHeight do
+            local rowRatio = innerHeight <= 1 and 0 or ((row - 1) / (innerHeight - 1))
+            local targetScroll = math.floor((rowRatio * math.max(0, maxScroll - 1)) + 0.5) + 1
+            self:addHit(id, barX, innerY + row - 1, barX, innerY + row - 1, {
+                kind = "scrollbar",
+                scroll = util.clamp(targetScroll, 1, maxScroll)
+            })
+        end
     end
 
     return scroll, visible

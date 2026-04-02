@@ -341,8 +341,8 @@ local function drawControlStrip(ui, y, width, controls)
         end
 
         if control.kind == "label" then
-            ui:fill(x, y, drawWidth, 1, colors.black, colors.white, " ")
-            ui:centerText(x, y, drawWidth, control.label, colors.white, colors.black)
+            ui:fill(x, y, drawWidth, 1, ui.theme.label or ui.theme.surfaceAlt, ui.theme.labelText or ui.theme.text, " ")
+            ui:centerText(x, y, drawWidth, control.label, ui.theme.labelText or ui.theme.text, ui.theme.label or ui.theme.surfaceAlt)
         else
             ui:button(control.id, x, y, drawWidth, control.label, {
                 active = control.active,
@@ -360,7 +360,7 @@ local function currentTitle(state)
     end
 
     local playlist = currentPlaylist(state)
-    return playlist and playlist.name or "No Playlist"
+    return playlist and ("(<-) " .. playlist.name) or "(<-) No Playlist"
 end
 
 local function currentActionText(state)
@@ -384,12 +384,16 @@ local function render(state)
     local clock = util.safeFormatTime()
     local pageIsTracks = state.page == "tracks"
     local title = currentTitle(state)
+    local headerColor = ui.theme.header or ui.theme.accent
+    local titleBarColor = ui.theme.titleBar or ui.theme.surface
+    local actionBarColor = state.lastError and colors.pink or (ui.theme.actionBar or ui.theme.accent)
 
     ui:fill(1, 1, width, height, ui.theme.background)
-    ui:fill(1, 1, width, 1, colors.blue)
-    ui:text(1, 1, util.truncate("KAMI-RADIO 2.0", math.max(1, width - #clock - 1)), colors.white, colors.blue)
-    ui:text(math.max(1, width - #clock + 1), 1, clock, colors.white, colors.blue)
-    ui:text(1, 3, util.truncate(title, width), colors.white, colors.black)
+    ui:fill(1, 1, width, 1, headerColor)
+    ui:text(1, 1, util.truncate("KAMI-RADIO 2.0", math.max(1, width - #clock - 1)), ui.theme.text, headerColor)
+    ui:text(math.max(1, width - #clock + 1), 1, clock, ui.theme.text, headerColor)
+    ui:fill(1, 3, width, 1, titleBarColor, ui.theme.text, " ")
+    ui:text(1, 3, util.truncate(title, width), ui.theme.text, titleBarColor)
     ui:addHit("title_action", 1, 3, width, 3, {
         kind = "title_action"
     })
@@ -435,8 +439,8 @@ local function render(state)
         { kind = "label", width = 5, label = volumeText },
         { id = "vol_up", width = 4, label = ICONS.volumeUp }
     })
-    ui:fill(1, height, width, 1, colors.blue, colors.white, " ")
-    ui:text(1, height, util.truncate(currentActionText(state), width), colors.white, colors.blue)
+    ui:fill(1, height, width, 1, actionBarColor, ui.theme.text, " ")
+    ui:text(1, height, util.truncate(currentActionText(state), width), ui.theme.text, actionBarColor)
 
     state.lastRenderClock = clock
     state.dirty = false
@@ -448,9 +452,15 @@ local function handleClick(state, x, y)
         return
     end
 
-    if hit.id == "playlists" and hit.meta and hit.meta.index then
+    if hit.id == "playlists" and hit.meta and hit.meta.kind == "scrollbar" and hit.meta.scroll then
+        state.playlistScroll = hit.meta.scroll
+        state.dirty = true
+    elseif hit.id == "playlists" and hit.meta and hit.meta.index then
         state.browserPlaylistIndex = hit.meta.index
         openPlaylist(state, hit.meta.index)
+    elseif hit.id == "tracks" and hit.meta and hit.meta.kind == "scrollbar" and hit.meta.scroll then
+        state.trackScroll = hit.meta.scroll
+        state.dirty = true
     elseif hit.id == "tracks" and hit.meta and hit.meta.index then
         state.selectedTrackIndex = hit.meta.index
         playSelected(state)
