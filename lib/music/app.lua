@@ -116,6 +116,7 @@ local function makeState(playlists, warnings)
         playing = settings.get(SETTINGS.playing, false),
         trackScroll = settings.get(SETTINGS.trackScroll, 1),
         playlistScroll = settings.get(SETTINGS.playlistScroll, 1),
+        manualTrackScroll = false,
         playbackToken = 0,
         status = "Ready",
         lastError = nil,
@@ -160,6 +161,7 @@ local function advanceTrack(state)
         end
         state.trackIndex = nextIndex
         state.selectedTrackIndex = nextIndex
+        state.manualTrackScroll = false
         return
     end
 
@@ -175,6 +177,7 @@ local function advanceTrack(state)
 
     state.trackIndex = nextIndex
     state.selectedTrackIndex = nextIndex
+    state.manualTrackScroll = false
 end
 
 local function interruptPlayback(state, keepPlaying)
@@ -195,6 +198,7 @@ local function setPlaylist(state, index)
     state.trackIndex = 1
     state.selectedTrackIndex = 1
     state.trackScroll = 1
+    state.manualTrackScroll = false
     state.status = "Playlist loaded: " .. playlist.name
     state.lastError = nil
     ensureTrackSelection(state)
@@ -225,6 +229,7 @@ local function playSelected(state)
         return
     end
 
+    state.manualTrackScroll = false
     state.trackIndex = state.selectedTrackIndex
     local track = currentTrack(state)
     state.status = track and ("Buffering " .. track.name) or "Ready"
@@ -261,6 +266,7 @@ local function stepTrack(state, direction)
 
     state.selectedTrackIndex = nextIndex
     state.trackIndex = nextIndex
+    state.manualTrackScroll = false
     playSelected(state)
 end
 
@@ -287,6 +293,7 @@ local function reloadCatalog(state)
     local playlist = currentPlaylist(state)
     state.trackIndex = playlist and (util.findIndexByField(playlist.songs, "name", currentTrackName) or 1) or 1
     state.selectedTrackIndex = state.trackIndex
+    state.manualTrackScroll = false
     state.status = "Library refreshed"
     state.lastError = nil
     ensureTrackSelection(state)
@@ -400,7 +407,12 @@ local function render(state)
 
     if pageIsTracks then
         local trackItems = playlist and playlist.songs or {}
-        ensureVisibleSelection(state, listHeight)
+        if state.manualTrackScroll then
+            local maxScroll = math.max(1, #trackItems - listHeight + 1)
+            state.trackScroll = util.clamp(state.trackScroll or 1, 1, maxScroll)
+        else
+            ensureVisibleSelection(state, listHeight)
+        end
         state.trackScroll = ui:list("tracks", 1, listY, width, listHeight, trackItems, state.selectedTrackIndex, state.trackScroll, {
             plain = true,
             formatter = function(item, index)
@@ -460,9 +472,11 @@ local function handleClick(state, x, y)
         openPlaylist(state, hit.meta.index)
     elseif hit.id == "tracks" and hit.meta and hit.meta.kind == "scrollbar" and hit.meta.scroll then
         state.trackScroll = hit.meta.scroll
+        state.manualTrackScroll = true
         state.dirty = true
     elseif hit.id == "tracks" and hit.meta and hit.meta.index then
         state.selectedTrackIndex = hit.meta.index
+        state.manualTrackScroll = false
         playSelected(state)
     elseif hit.id == "title_action" then
         if state.page == "tracks" then
@@ -517,10 +531,12 @@ local function handleKey(state, key)
 
     if key == keys.up and playlist and state.selectedTrackIndex and state.selectedTrackIndex > 1 then
         state.selectedTrackIndex = state.selectedTrackIndex - 1
+        state.manualTrackScroll = false
         state.dirty = true
         persist(state)
     elseif key == keys.down and playlist and state.selectedTrackIndex and state.selectedTrackIndex < #playlist.songs then
         state.selectedTrackIndex = state.selectedTrackIndex + 1
+        state.manualTrackScroll = false
         state.dirty = true
         persist(state)
     elseif key == keys.enter then
