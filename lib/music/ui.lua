@@ -96,17 +96,23 @@ function UI:centerText(x, y, width, value, textColor, background)
     self:text(x + offset, y, value, textColor, background)
 end
 
-function UI:panel(x, y, width, height, title, accent)
-    accent = accent or self.theme.accent
-    self:fill(x, y, width, height, self.theme.surface, self.theme.text, " ")
+function UI:panel(x, y, width, height, title, accent, options)
+    options = options or {}
+    accent = accent or options.titleBackground or self.theme.accent
+    local background = options.background or self.theme.surface
+    local foreground = options.foreground or self.theme.text
+    local titleForeground = options.titleForeground or foreground
+
+    self:fill(x, y, width, height, background, foreground, " ")
 
     if height >= 1 then
         self:fill(x, y, width, 1, accent)
-        self:text(x + 1, y, util.truncate(title or "", math.max(0, width - 2)), self.theme.text, accent)
+        self:text(x + 1, y, util.truncate(title or "", math.max(0, width - 2)), titleForeground, accent)
     end
 end
 
-function UI:modal(width, height, title, accent)
+function UI:modal(width, height, title, accent, options)
+    options = options or {}
     width = math.max(12, math.min(self.width, width or self.width))
     height = math.max(6, math.min(self.height, height or self.height))
 
@@ -121,7 +127,7 @@ function UI:modal(width, height, title, accent)
         self:fill(shadowX, shadowY, shadowWidth, shadowHeight, colors.black, self.theme.text, " ")
     end
 
-    self:panel(x, y, width, height, title, accent)
+    self:panel(x, y, width, height, title, accent, options)
 
     return {
         x = x,
@@ -144,12 +150,14 @@ end
 
 function UI:button(id, x, y, width, label, options)
     options = options or {}
-    local bg = options.active and self.theme.buttonActive or self.theme.button
+    local bg = options.active and (options.activeBackground or self.theme.buttonActive) or (options.background or self.theme.button)
     local fg = options.foreground or self.theme.buttonText
+    local activeForeground = options.activeForeground or fg
     local height = math.max(1, options.height or 2)
+    local textColor = options.active and activeForeground or fg
 
-    self:fill(x, y, width, height, bg, fg, " ")
-    self:centerText(x, y + math.floor((height - 1) / 2), width, label, fg, bg)
+    self:fill(x, y, width, height, bg, textColor, " ")
+    self:centerText(x, y + math.floor((height - 1) / 2), width, label, textColor, bg)
     self:addHit(id, x, y, x + width - 1, y + height - 1, options.meta)
 end
 

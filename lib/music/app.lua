@@ -653,7 +653,7 @@ local function drawSearchRow(state, target)
 
     ui:input("search_box", 1, 2, ui.width, label, value, {
         active = state.activeSearch == target,
-        placeholder = target == "tracks" and "Type to filter songs" or "Type to filter playlists",
+        placeholder = target == "tracks" and "" or "", -- no default
         meta = {
             target = target
         }
@@ -718,6 +718,18 @@ local function renderModal(state)
     end
 
     local ui = state.ui
+    local modalPalette = {
+        background = colors.red,
+        foreground = colors.white,
+        titleBackground = colors.black,
+        titleForeground = colors.white,
+        buttonBackground = colors.black,
+        buttonForeground = colors.white,
+        buttonActiveBackground = colors.white,
+        buttonActiveForeground = colors.black,
+        progressBackground = colors.black,
+        progressFill = colors.white
+    }
     local width = math.max(28, math.min(ui.width - 2, 46))
     local messageWidth = math.max(1, width - 4)
     local messageLines = util.wrapText(modal.message or "", messageWidth)
@@ -736,9 +748,13 @@ local function renderModal(state)
     if #messageLines == maxMessageRows and #util.wrapText(modal.message or "", messageWidth) > maxMessageRows then
         messageLines[#messageLines] = util.truncate(messageLines[#messageLines], math.max(1, messageWidth - 3)) .. "..."
     end
-
     local height = math.max(8, #messageLines + progressRows + buttonRows + 4)
-    local box = ui:modal(width, math.min(ui.height, height), modal.title, modal.accent)
+    local box = ui:modal(width, math.min(ui.height, height), modal.title, modalPalette.titleBackground, {
+        background = modalPalette.background,
+        foreground = modalPalette.foreground,
+        titleBackground = modalPalette.titleBackground,
+        titleForeground = modalPalette.titleForeground
+    })
     local textX = box.innerX
     local textY = box.innerY
 
@@ -747,14 +763,14 @@ local function renderModal(state)
             break
         end
 
-        ui:text(textX, textY, util.truncate(line, box.innerWidth), ui.theme.text, ui.theme.surface)
+        ui:text(textX, textY, util.truncate(line, box.innerWidth), modalPalette.foreground, modalPalette.background)
         textY = textY + 1
     end
 
     if modal.progress then
-        ui:text(textX, textY, util.truncate(modal.progress.message or "", box.innerWidth), ui.theme.labelText or ui.theme.text, ui.theme.surface)
+        ui:text(textX, textY, util.truncate(modal.progress.message or "", box.innerWidth), modalPalette.foreground, modalPalette.background)
         textY = textY + 1
-        ui:progress(textX, textY, box.innerWidth, modal.progress.ratio or 0)
+        ui:progress(textX, textY, box.innerWidth, modal.progress.ratio or 0, modalPalette.progressFill, modalPalette.progressBackground)
         textY = textY + 1
     end
 
@@ -776,6 +792,10 @@ local function renderModal(state)
             ui:button("modal_button", buttonX, buttonY, drawWidth, button.label, {
                 active = index == modal.selectedIndex,
                 height = 1,
+                background = modalPalette.buttonBackground,
+                foreground = modalPalette.buttonForeground,
+                activeBackground = modalPalette.buttonActiveBackground,
+                activeForeground = modalPalette.buttonActiveForeground,
                 meta = {
                     index = index,
                     id = button.id
