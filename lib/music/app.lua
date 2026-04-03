@@ -211,6 +211,7 @@ local function makeState(playlists, warnings)
         display = nil,
         modal = nil,
         updateInfo = nil,
+        pendingAction = nil,
         exitRequested = false,
         rebootRequested = false,
         playlistSearch = "",
@@ -717,6 +718,18 @@ local function makeModal(title, message, buttons, options)
     }
 end
 
+local function queueAction(state, kind, payload)
+    if state.pendingAction then
+        return false
+    end
+
+    state.pendingAction = {
+        kind = kind,
+        payload = payload
+    }
+    return true
+end
+
 local function buildReadyStatus(warnings, updateErr)
     local parts = {}
     if #warnings > 0 then
@@ -923,9 +936,50 @@ local function performUpdate(state)
     end
 end
 
+local function requestReload(state)
+    if not queueAction(state, "reload") then
+        state.status = "Background task already running"
+        state.dirty = true
+        return
+    end
+
+    state.status = "Refreshing library..."
+    state.lastError = nil
+    state.dirty = true
+end
+
+local function requestUpdate(state)
+    local updateInfo = state.updateInfo
+    if not updateInfo or not updateInfo.remoteManifest then
+        return
+    end
+
+    if not queueAction(state, "update", updateInfo) then
+        state.status = "Background task already running"
+        state.dirty = true
+        return
+    end
+
+    state.modal = makeModal(
+        "Updating",
+        "Preparing update...",
+        nil,
+        {
+            busy = true,
+            progress = {
+                ratio = 0,
+                message = "Preparing update..."
+            }
+        }
+    )
+    state.status = "Applying update " .. updateInfo.targetVersion
+    state.lastError = nil
+    state.dirty = true
+end
+
 local function activateModalButton(state, buttonId)
     if buttonId == "update_confirm" then
-        performUpdate(state)
+        requestUpdate(state)
     elseif buttonId == "update_cancel" then
         state.modal = nil
         state.status = "Update skipped"
@@ -1281,9 +1335,71 @@ local function handleKey(state, key)
     elseif key == keys.s then
         stopPlayback(state)
     elseif key == keys.r then
-        reloadCatalog(state)
+        requestReload(state)
     elseif key == keys.slash then
         state.activeSearch = "tracks"
+        state.dirty = true
+    end
+end
+
+local function runPendingAction(state, action)
+    if not action then
+        return
+    end
+
+    if action.kind == "reload" then
+        local ok, err = pcall(reloadCatalog, state)
+        if not ok then
+            state.status = "Refresh failed"
+            state.lastError = tostring(err)
+            state.dirty = true
+        end
+    elseif action.kind == "update" then
+        local ok, err = pcall(performUpdate, state)
+        if not ok then
+            state.status = "Update failed"
+            state.lastError = tostring(err)
+            state.modal = makeModal(
+                "Update Failed",
+                "The update could not be completed.\n" .. tostring(err),
+                {
+                    { id = "modal_close", label = "Close" }
+                },
+                {
+                    selectedIndex = 1
+                }
+            )
+            state.dirty = true
+        end
+    end
+end
+
+local function workerLoop(state)
+    while not state.exitRequested do
+        local action = state.pendingAction
+        if action then
+            state.pendingAction = nil
+            runPendingAction(state, action)
+        else
+            sleep(0.05)
+        end
+    end
+end
+
+local function dispatchInputEvent(state, event, a, b, c)
+    if event == "mouse_click" then
+        handleClick(state, b, c)
+    elseif event == "mouse_scroll" then
+        handleScroll(state, a, b, c)
+    elseif event == "monitor_touch" then
+        handleClick(state, b, c)
+    elseif event == "key" then
+        handleKey(state, a)
+    elseif event == "char" then
+        handleChar(state, a)
+    elseif event == "paste" then
+        handlePaste(state, a)
+    elseif event == "term_resize" or event == "monitor_resize" then
         state.dirty = true
     end
 end
@@ -1360,19 +1476,10 @@ end
 local function inputLoop(state)
     while not state.exitRequested do
         local event, a, b, c = os.pullEvent()
-        if event == "mouse_click" then
-            handleClick(state, b, c)
-        elseif event == "mouse_scroll" then
-            handleScroll(state, a, b, c)
-        elseif event == "monitor_touch" then
-            handleClick(state, b, c)
-        elseif event == "key" then
-            handleKey(state, a)
-        elseif event == "char" then
-            handleChar(state, a)
-        elseif event == "paste" then
-            handlePaste(state, a)
-        elseif event == "term_resize" or event == "monitor_resize" then
+        local ok, err = pcall(dispatchInputEvent, state, event, a, b, c)
+        if not ok then
+            state.status = "Input recovered after error"
+            state.lastError = tostring(err)
             state.dirty = true
         end
     end
@@ -1413,6 +1520,9 @@ function M.run()
         end,
         function()
             inputLoop(state)
+        end,
+        function()
+            workerLoop(state)
         end
     )
 
