@@ -17,7 +17,8 @@ local function normalizeEntry(entry)
         name = util.trim(entry.name or entry.title or repo),
         repo = repo,
         branch = util.trim(entry.branch or "main"),
-        index = util.trim(entry.index or "index.txt")
+        index = util.trim(entry.index or "index.txt"),
+        searchText = (util.trim(entry.name or entry.title or repo) .. " " .. repo):lower()
     }
 end
 

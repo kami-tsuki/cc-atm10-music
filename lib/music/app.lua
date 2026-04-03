@@ -8,6 +8,8 @@ local util = require("music.util")
 
 local M = {}
 
+local PERSIST_DELAY = 0.2
+
 local SETTINGS = {
     playlist = "ccmusic.playlist",
     track = "ccmusic.track",
@@ -71,19 +73,78 @@ local function monotonicTime()
     return os.clock()
 end
 
-local function persist(state)
+local function capturePersistSnapshot(state)
     local playlist = state.playlists[state.playlistIndex]
     local track = playlist and playlist.songs[state.trackIndex] or nil
 
-    settings.set(SETTINGS.playlist, playlist and playlist.name or "")
-    settings.set(SETTINGS.track, track and track.name or "")
-    settings.set(SETTINGS.shuffle, state.shuffle)
-    settings.set(SETTINGS.loopMode, state.loopMode)
-    settings.set(SETTINGS.volume, state.volume)
-    settings.set(SETTINGS.playing, state.playing)
-    settings.set(SETTINGS.trackScroll, state.trackScroll)
-    settings.set(SETTINGS.playlistScroll, state.playlistScroll)
+    return {
+        playlist = playlist and playlist.name or "",
+        track = track and track.name or "",
+        shuffle = state.shuffle,
+        loopMode = state.loopMode,
+        volume = state.volume,
+        playing = state.playing,
+        trackScroll = state.trackScroll,
+        playlistScroll = state.playlistScroll
+    }
+end
+
+local function persistSnapshotsEqual(left, right)
+    if not left or not right then
+        return false
+    end
+
+    return left.playlist == right.playlist
+        and left.track == right.track
+        and left.shuffle == right.shuffle
+        and left.loopMode == right.loopMode
+        and left.volume == right.volume
+        and left.playing == right.playing
+        and left.trackScroll == right.trackScroll
+        and left.playlistScroll == right.playlistScroll
+end
+
+local function flushPersist(state)
+    if not state.persistPending then
+        return
+    end
+
+    local snapshot = capturePersistSnapshot(state)
+    state.persistPending = false
+
+    if persistSnapshotsEqual(snapshot, state.lastPersistSnapshot) then
+        return
+    end
+
+    settings.set(SETTINGS.playlist, snapshot.playlist)
+    settings.set(SETTINGS.track, snapshot.track)
+    settings.set(SETTINGS.shuffle, snapshot.shuffle)
+    settings.set(SETTINGS.loopMode, snapshot.loopMode)
+    settings.set(SETTINGS.volume, snapshot.volume)
+    settings.set(SETTINGS.playing, snapshot.playing)
+    settings.set(SETTINGS.trackScroll, snapshot.trackScroll)
+    settings.set(SETTINGS.playlistScroll, snapshot.playlistScroll)
     settings.save()
+
+    state.lastPersistSnapshot = snapshot
+end
+
+local function persist(state, immediate)
+    state.persistPending = true
+    state.nextPersistAt = immediate and monotonicTime() or (monotonicTime() + PERSIST_DELAY)
+    if immediate then
+        flushPersist(state)
+    end
+end
+
+local function flushPersistIfDue(state, force)
+    if not state.persistPending then
+        return
+    end
+
+    if force or monotonicTime() >= (state.nextPersistAt or 0) then
+        flushPersist(state)
+    end
 end
 
 local function currentPlaylist(state)
@@ -144,6 +205,12 @@ local function makeState(playlists, warnings)
         playbackProgress = 0,
         clockText = util.safeFormatTime(),
         nextClockRefreshAt = 0,
+        nextPersistAt = 0,
+        persistPending = false,
+        lastPersistSnapshot = nil,
+        libraryRevision = 1,
+        playlistSearchKey = "",
+        trackSearchKey = "",
         caches = {
             playlists = {
                 key = nil,
@@ -168,7 +235,7 @@ local function makeState(playlists, warnings)
     end
 
     ensureTrackSelection(state)
-    persist(state)
+    persist(state, true)
     return state
 end
 
@@ -319,19 +386,18 @@ local function invalidateCache(state, target)
 end
 
 local function matchesQuery(value, query)
-    query = util.trim(query or ""):lower()
-    if query == "" then
+    if not query or query == "" then
         return true
     end
 
-    return tostring(value or ""):lower():find(query, 1, true) ~= nil
+    return tostring(value or ""):find(query, 1, true) ~= nil
 end
 
 local function buildPlaylistItems(state)
     local cacheKey = table.concat({
-        state.playlistSearch,
+        state.playlistSearchKey,
         tostring(state.browserPlaylistIndex),
-        tostring(#state.playlists)
+        tostring(state.libraryRevision)
     }, "\31")
 
     local cache = state.caches.playlists
@@ -343,7 +409,7 @@ local function buildPlaylistItems(state)
     local selectedIndex = nil
 
     for index, item in ipairs(state.playlists) do
-        if matchesQuery(item.name .. " " .. (item.repo or ""), state.playlistSearch) then
+        if matchesQuery(item.searchText or "", state.playlistSearchKey) then
             items[#items + 1] = {
                 sourceIndex = index,
                 sourceItem = item
@@ -363,9 +429,9 @@ end
 local function buildTrackItems(state)
     local playlist = currentPlaylist(state)
     local cacheKey = table.concat({
-        playlist and playlist.name or "",
-        playlist and tostring(#playlist.songs) or "0",
-        state.trackSearch,
+        tostring(state.libraryRevision),
+        tostring(state.playlistIndex or 0),
+        state.trackSearchKey,
         tostring(state.selectedTrackIndex or 0)
     }, "\31")
 
@@ -385,7 +451,7 @@ local function buildTrackItems(state)
     end
 
     for index, item in ipairs(playlist.songs) do
-        if matchesQuery(item.name .. " " .. (item.file or ""), state.trackSearch) then
+        if matchesQuery(item.searchText or "", state.trackSearchKey) then
             items[#items + 1] = {
                 sourceIndex = index,
                 sourceItem = item
@@ -404,9 +470,11 @@ end
 
 local function setSearchQuery(state, target, query)
     query = tostring(query or "")
+    local normalizedQuery = util.trim(query):lower()
 
     if target == "playlists" then
         state.playlistSearch = query
+        state.playlistSearchKey = normalizedQuery
         invalidateCache(state, "playlists")
         local items, selectedIndex = buildPlaylistItems(state)
         if #items > 0 and not selectedIndex then
@@ -416,6 +484,7 @@ local function setSearchQuery(state, target, query)
         state.playlistScroll = 1
     elseif target == "tracks" then
         state.trackSearch = query
+        state.trackSearchKey = normalizedQuery
         invalidateCache(state, "tracks")
         local items, selectedIndex = buildTrackItems(state)
         if #items > 0 and not selectedIndex then
@@ -478,6 +547,7 @@ local function reloadCatalog(state)
     state.playlists = playlists
     state.warnings = warnings
     invalidateCache(state)
+    state.libraryRevision = state.libraryRevision + 1
     state.playlistIndex = util.findIndexByField(playlists, "name", currentPlaylistName) or 1
     state.browserPlaylistIndex = state.playlistIndex
     local playlist = currentPlaylist(state)
@@ -926,8 +996,8 @@ local function render(state)
     ui:progressBlocks(1, height - 3, width, progressRatio, {
         background = ui.theme.surfaceAlt,
         foreground = ui.theme.accent,
-        filledGlyph = "█",
-        emptyGlyph = "░"
+        filledGlyph = "=",
+        emptyGlyph = "-"
     })
 
     local volumeText = string.format("%02d", math.floor(state.volume * 100))
@@ -1199,6 +1269,7 @@ end
 local function renderLoop(state)
     while not state.exitRequested do
         refreshClock(state)
+        flushPersistIfDue(state, false)
         if state.dirty then
             render(state)
         end
@@ -1264,6 +1335,8 @@ function M.run()
             inputLoop(state)
         end
     )
+
+    flushPersistIfDue(state, true)
 
     if state.rebootRequested and os.reboot then
         os.reboot()

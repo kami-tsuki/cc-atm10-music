@@ -195,8 +195,8 @@ function UI:progressBlocks(x, y, width, ratio, options)
 
     local background = options.background or self.theme.surfaceAlt
     local foreground = options.foreground or self.theme.text
-    local filledGlyph = options.filledGlyph or "█"
-    local emptyGlyph = options.emptyGlyph or "░"
+    local filledGlyph = options.filledGlyph or "="
+    local emptyGlyph = options.emptyGlyph or "-"
     local bar = util.makeProgressBar(width, ratio, filledGlyph, emptyGlyph)
 
     self:fill(x, y, width, 1, background, foreground, " ")

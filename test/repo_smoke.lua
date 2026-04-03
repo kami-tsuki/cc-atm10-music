@@ -188,6 +188,20 @@ return function()
     local updater = require("music.updater")
     local util = require("music.util")
 
+    local function bumpPatchVersion(version)
+        local parts = {}
+        for token in tostring(version or "0.0.0"):gmatch("(%d+)") do
+            parts[#parts + 1] = tonumber(token)
+        end
+
+        while #parts < 3 do
+            parts[#parts + 1] = 0
+        end
+
+        parts[3] = parts[3] + 1
+        return string.format("%d.%d.%d", parts[1], parts[2], parts[3])
+    end
+
     local function replaceVersion(body, nextVersion)
         local replaced, count = body:gsub('"version"%s*:%s*"[^"]+"', '"version": "' .. nextVersion .. '"', 1)
         if count ~= 1 then
@@ -216,9 +230,12 @@ return function()
     end
 
     local repoManifest = util.readFile("/repo/manifest.json")
+    local baseVersion = assert(updater.loadManifest("manifest.json")).version
+    local nextVersion = bumpPatchVersion(baseVersion)
+    local failingVersion = bumpPatchVersion(nextVersion)
     local originalReadme = util.readFile("README.md")
     _G.__smokeBodyOverrides = {
-        ["manifest.json"] = replaceVersion(repoManifest, "2.1.1"),
+        ["manifest.json"] = replaceVersion(repoManifest, nextVersion),
         ["README.md"] = originalReadme .. "\n\nSmoke update marker.\n"
     }
 
@@ -226,8 +243,14 @@ return function()
     if not newerInfo then
         error("Failed to detect newer manifest: " .. tostring(newerErr), 0)
     end
-    if not newerInfo.updateAvailable or newerInfo.targetVersion ~= "2.1.1" then
-        error("Updater did not detect the newer version", 0)
+    if not newerInfo.updateAvailable or newerInfo.targetVersion ~= nextVersion then
+        error(
+            "Updater did not detect the newer version"
+                .. " | current=" .. tostring(newerInfo.currentVersion)
+                .. " | target=" .. tostring(newerInfo.targetVersion)
+                .. " | available=" .. tostring(newerInfo.updateAvailable),
+            0
+        )
     end
 
     local installOk, installResult = updater.installFromManifest(newerInfo.remoteManifest)
@@ -236,7 +259,7 @@ return function()
     end
 
     local installedManifest = updater.loadManifest("manifest.json")
-    if not installedManifest or installedManifest.version ~= "2.1.1" then
+    if not installedManifest or installedManifest.version ~= nextVersion then
         error("Updated manifest was not written correctly", 0)
     end
 
@@ -246,7 +269,7 @@ return function()
     end
 
     _G.__smokeBodyOverrides = {
-        ["manifest.json"] = replaceVersion(repoManifest, "2.1.2")
+        ["manifest.json"] = replaceVersion(repoManifest, failingVersion)
     }
     _G.__smokeFailPath = "lib/music/app.lua"
 
@@ -267,7 +290,7 @@ return function()
     end
 
     local afterFailure = updater.loadManifest("manifest.json")
-    if not afterFailure or afterFailure.version ~= "2.1.1" then
+    if not afterFailure or afterFailure.version ~= nextVersion then
         error("Failed update should not advance the local version", 0)
     end
 

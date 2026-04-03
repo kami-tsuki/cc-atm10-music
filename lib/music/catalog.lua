@@ -12,7 +12,8 @@ local function normalizeSong(song)
         end
         return {
             name = label,
-            file = label
+            file = label,
+            searchText = (label .. " " .. label):lower()
         }
     end
 
@@ -24,7 +25,8 @@ local function normalizeSong(song)
         end
         return {
             name = name,
-            file = file
+            file = file,
+            searchText = (name .. " " .. file):lower()
         }
     end
 
@@ -122,6 +124,7 @@ function M.loadPlaylists(entries)
                     repo = entry.repo,
                     branch = entry.branch,
                     index = entry.index,
+                    searchText = entry.searchText or ((entry.name .. " " .. entry.repo):lower()),
                     songs = songs
                 }
             else
