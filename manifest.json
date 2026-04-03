@@ -1,0 +1,22 @@
+{
+    "version": "2.1.0",
+    "repo": "kami-tsuki/cc-atm10-music",
+    "branch": "main",
+    "files": [
+        "startup.lua",
+        "README.md",
+        "manifest.json",
+        "config.json",
+        "lib/*"
+    ],
+    "obsolete": [
+        "server.lua",
+        "client.lua",
+        "lib/music/network.lua",
+        "lib/music/server_app.lua",
+        "lib/music/client_app.lua"
+    ],
+    "preserve": [
+        "config.json"
+    ]
+}

@@ -33,11 +33,12 @@ Run this on the ComputerCraft computer that will host the player:
 wget run https://raw.githubusercontent.com/kami-tsuki/cc-atm10-music/main/install.lua
 ```
 
-The installer is intentionally non-interactive. It downloads the runtime, creates the `lib/music` folder, removes obsolete server/client files from older versions, and keeps your local `config.json` if it already exists.
+The installer is intentionally non-interactive. It downloads the runtime from `manifest.json`, creates the `lib/music` folder, removes obsolete server/client files from older versions, and keeps your local `config.json` if it already exists.
 
 Installed files:
 
 - `startup.lua`
+- `manifest.json`
 - `config.json`
 - `lib/music/*.lua`
 

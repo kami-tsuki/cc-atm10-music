@@ -3,6 +3,7 @@ local audio = require("music.audio")
 local catalog = require("music.catalog")
 local config = require("music.config")
 local UI = require("music.ui")
+local updater = require("music.updater")
 local util = require("music.util")
 
 local M = {}
@@ -61,6 +62,13 @@ local function randomSeed()
         return os.epoch("utc")
     end
     return math.floor(os.clock() * 100000) + os.time()
+end
+
+local function monotonicTime()
+    if os.epoch then
+        return os.epoch("utc") / 1000
+    end
+    return os.clock()
 end
 
 local function persist(state)
@@ -122,11 +130,32 @@ local function makeState(playlists, warnings)
         lastError = nil,
         speakers = audio.findSpeakers(),
         dirty = true,
-        lastRenderClock = nil,
         hasMonitor = false,
         page = playlistName ~= "" and "tracks" or "playlists",
         ui = nil,
-        display = nil
+        display = nil,
+        modal = nil,
+        updateInfo = nil,
+        exitRequested = false,
+        rebootRequested = false,
+        playlistSearch = "",
+        trackSearch = "",
+        activeSearch = nil,
+        playbackProgress = 0,
+        clockText = util.safeFormatTime(),
+        nextClockRefreshAt = 0,
+        caches = {
+            playlists = {
+                key = nil,
+                items = {},
+                selectedIndex = nil
+            },
+            tracks = {
+                key = nil,
+                items = {},
+                selectedIndex = nil
+            }
+        }
     }
 
     local playlist = playlists[state.playlistIndex]
@@ -220,6 +249,7 @@ local function openPlaylist(state, index)
     end
 
     state.page = "tracks"
+    state.playbackProgress = 0
     state.status = "Playlist: " .. playlist.name
     persist(state)
 end
@@ -231,6 +261,7 @@ local function playSelected(state)
 
     state.manualTrackScroll = false
     state.trackIndex = state.selectedTrackIndex
+    state.playbackProgress = 0
     local track = currentTrack(state)
     state.status = track and ("Buffering " .. track.name) or "Ready"
     state.lastError = nil
@@ -238,6 +269,7 @@ local function playSelected(state)
 end
 
 local function stopPlayback(state)
+    state.playbackProgress = 0
     state.status = "Stopped"
     state.lastError = nil
     interruptPlayback(state, false)
@@ -277,6 +309,163 @@ local function adjustVolume(state, delta)
     persist(state)
 end
 
+local function invalidateCache(state, target)
+    if target == "playlists" or not target then
+        state.caches.playlists.key = nil
+    end
+    if target == "tracks" or not target then
+        state.caches.tracks.key = nil
+    end
+end
+
+local function matchesQuery(value, query)
+    query = util.trim(query or ""):lower()
+    if query == "" then
+        return true
+    end
+
+    return tostring(value or ""):lower():find(query, 1, true) ~= nil
+end
+
+local function buildPlaylistItems(state)
+    local cacheKey = table.concat({
+        state.playlistSearch,
+        tostring(state.browserPlaylistIndex),
+        tostring(#state.playlists)
+    }, "\31")
+
+    local cache = state.caches.playlists
+    if cache.key == cacheKey then
+        return cache.items, cache.selectedIndex
+    end
+
+    local items = {}
+    local selectedIndex = nil
+
+    for index, item in ipairs(state.playlists) do
+        if matchesQuery(item.name .. " " .. (item.repo or ""), state.playlistSearch) then
+            items[#items + 1] = {
+                sourceIndex = index,
+                sourceItem = item
+            }
+            if index == state.browserPlaylistIndex then
+                selectedIndex = #items
+            end
+        end
+    end
+
+    cache.key = cacheKey
+    cache.items = items
+    cache.selectedIndex = selectedIndex
+    return items, selectedIndex
+end
+
+local function buildTrackItems(state)
+    local playlist = currentPlaylist(state)
+    local cacheKey = table.concat({
+        playlist and playlist.name or "",
+        playlist and tostring(#playlist.songs) or "0",
+        state.trackSearch,
+        tostring(state.selectedTrackIndex or 0)
+    }, "\31")
+
+    local cache = state.caches.tracks
+    if cache.key == cacheKey then
+        return cache.items, cache.selectedIndex
+    end
+
+    local items = {}
+    local selectedIndex = nil
+
+    if not playlist then
+        cache.key = cacheKey
+        cache.items = items
+        cache.selectedIndex = selectedIndex
+        return items, selectedIndex
+    end
+
+    for index, item in ipairs(playlist.songs) do
+        if matchesQuery(item.name .. " " .. (item.file or ""), state.trackSearch) then
+            items[#items + 1] = {
+                sourceIndex = index,
+                sourceItem = item
+            }
+            if index == state.selectedTrackIndex then
+                selectedIndex = #items
+            end
+        end
+    end
+
+    cache.key = cacheKey
+    cache.items = items
+    cache.selectedIndex = selectedIndex
+    return items, selectedIndex
+end
+
+local function setSearchQuery(state, target, query)
+    query = tostring(query or "")
+
+    if target == "playlists" then
+        state.playlistSearch = query
+        invalidateCache(state, "playlists")
+        local items, selectedIndex = buildPlaylistItems(state)
+        if #items > 0 and not selectedIndex then
+            state.browserPlaylistIndex = items[1].sourceIndex
+            invalidateCache(state, "playlists")
+        end
+        state.playlistScroll = 1
+    elseif target == "tracks" then
+        state.trackSearch = query
+        invalidateCache(state, "tracks")
+        local items, selectedIndex = buildTrackItems(state)
+        if #items > 0 and not selectedIndex then
+            state.selectedTrackIndex = items[1].sourceIndex
+            invalidateCache(state, "tracks")
+        end
+        state.trackScroll = 1
+        state.manualTrackScroll = false
+    end
+
+    state.dirty = true
+end
+
+local function currentSearchTarget(state)
+    return state.page == "tracks" and "tracks" or "playlists"
+end
+
+local function isSearchActive(state)
+    return state.activeSearch ~= nil and state.activeSearch == currentSearchTarget(state)
+end
+
+local function moveFilteredSelection(state, target, delta)
+    local items, selectedIndex
+    if target == "tracks" then
+        items, selectedIndex = buildTrackItems(state)
+    else
+        items, selectedIndex = buildPlaylistItems(state)
+    end
+
+    if #items == 0 then
+        return false
+    end
+
+    selectedIndex = util.clamp((selectedIndex or 1) + delta, 1, #items)
+    local sourceIndex = items[selectedIndex].sourceIndex
+
+    if target == "tracks" then
+        state.selectedTrackIndex = sourceIndex
+        state.manualTrackScroll = false
+        invalidateCache(state, "tracks")
+        persist(state)
+    else
+        state.browserPlaylistIndex = sourceIndex
+        invalidateCache(state, "playlists")
+    end
+
+    state.dirty = true
+    return true
+end
+
 local function reloadCatalog(state)
     local currentPlaylistName = currentPlaylist(state) and currentPlaylist(state).name or ""
     local currentTrackName = currentTrack(state) and currentTrack(state).name or ""
@@ -288,38 +477,64 @@ local function reloadCatalog(state)
 
     state.playlists = playlists
     state.warnings = warnings
+    invalidateCache(state)
     state.playlistIndex = util.findIndexByField(playlists, "name", currentPlaylistName) or 1
     state.browserPlaylistIndex = state.playlistIndex
     local playlist = currentPlaylist(state)
     state.trackIndex = playlist and (util.findIndexByField(playlist.songs, "name", currentTrackName) or 1) or 1
     state.selectedTrackIndex = state.trackIndex
     state.manualTrackScroll = false
+    state.playbackProgress = 0
     state.status = "Library refreshed"
     state.lastError = nil
     ensureTrackSelection(state)
     state.dirty = true
     persist(state)
+
+    setSearchQuery(state, "playlists", state.playlistSearch)
+    setSearchQuery(state, "tracks", state.trackSearch)
 end
 
-local function ensureVisibleSelection(state, visibleRows)
-    visibleRows = math.max(1, visibleRows)
-    local playlist = currentPlaylist(state)
-    if not playlist then
-        state.trackScroll = 1
+local function setPlaybackProgress(state, ratio)
+    local width = math.max(1, (state.ui and state.ui.width) or 32)
+    local quantized = math.floor((util.clamp(ratio or 0, 0, 1) * width) + 0.5) / width
+    if quantized ~= state.playbackProgress then
+        state.playbackProgress = quantized
+        state.dirty = true
+    end
+end
+
+local function refreshClock(state)
+    local now = monotonicTime()
+    if now < state.nextClockRefreshAt then
         return
     end
 
-    if not state.selectedTrackIndex then
-        state.selectedTrackIndex = 1
+    state.nextClockRefreshAt = now + 1
+    local nextClock = util.safeFormatTime()
+    if nextClock ~= state.clockText then
+        state.clockText = nextClock
+        state.dirty = true
+    end
+end
+
+local function ensureVisibleRow(scroll, selectedRow, totalRows, visibleRows)
+    visibleRows = math.max(1, visibleRows)
+    totalRows = math.max(0, totalRows or 0)
+
+    if totalRows == 0 or not selectedRow then
+        return 1
     end
 
-    local maxScroll = math.max(1, #playlist.songs - visibleRows + 1)
-    state.trackScroll = util.clamp(state.trackScroll or 1, 1, maxScroll)
-    if state.selectedTrackIndex < state.trackScroll then
-        state.trackScroll = state.selectedTrackIndex
-    elseif state.selectedTrackIndex >= state.trackScroll + visibleRows then
-        state.trackScroll = state.selectedTrackIndex - visibleRows + 1
+    local maxScroll = math.max(1, totalRows - visibleRows + 1)
+    scroll = util.clamp(scroll or 1, 1, maxScroll)
+    if selectedRow < scroll then
+        scroll = selectedRow
+    elseif selectedRow >= scroll + visibleRows then
+        scroll = selectedRow - visibleRows + 1
     end
+
+    return util.clamp(scroll, 1, maxScroll)
 end
 
 local function formatPlaylistLabel(item)
@@ -361,6 +576,275 @@ local function drawControlStrip(ui, y, width, controls)
     end
 end
 
+local function drawSearchRow(state, target)
+    local ui = state.ui
+    local label = target == "tracks" and "Songs" or "Playlists"
+    local value = target == "tracks" and state.trackSearch or state.playlistSearch
+
+    ui:input("search_box", 1, 2, ui.width, label, value, {
+        active = state.activeSearch == target,
+        placeholder = target == "tracks" and "Type to filter songs" or "Type to filter playlists",
+        meta = {
+            target = target
+        }
+    })
+end
+
+local function makeModal(title, message, buttons, options)
+    options = options or {}
+
+    return {
+        title = title or "Notice",
+        message = message or "",
+        buttons = buttons or {},
+        selectedIndex = options.selectedIndex or ((buttons and #buttons > 0) and 1 or nil),
+        accent = options.accent,
+        progress = options.progress,
+        busy = options.busy or false
+    }
+end
+
+local function buildReadyStatus(warnings, updateErr)
+    local parts = {}
+    if #warnings > 0 then
+        parts[#parts + 1] = "Ready with " .. #warnings .. " warning(s)"
+    else
+        parts[#parts + 1] = "Ready"
+    end
+
+    if updateErr then
+        parts[#parts + 1] = "update check failed"
+    end
+
+    return table.concat(parts, " | ")
+end
+
+local function showUpdatePrompt(state, updateInfo)
+    state.updateInfo = updateInfo
+    state.modal = makeModal(
+        "Update Available",
+        string.format(
+            "A new version is available. Update from %s to %s now?",
+            updateInfo.currentVersion,
+            updateInfo.targetVersion
+        ),
+        {
+            { id = "update_confirm", label = "Update Now" },
+            { id = "update_cancel", label = "Later" }
+        },
+        {
+            selectedIndex = 1
+        }
+    )
+    state.status = "Update available: " .. updateInfo.targetVersion
+    state.lastError = nil
+    state.dirty = true
+end
+
+local function renderModal(state)
+    local modal = state.modal
+    if not modal then
+        return
+    end
+
+    local ui = state.ui
+    local width = math.max(28, math.min(ui.width - 2, 46))
+    local messageWidth = math.max(1, width - 4)
+    local messageLines = util.wrapText(modal.message or "", messageWidth)
+    local progressRows = modal.progress and 2 or 0
+    local buttonRows = (#modal.buttons > 0) and 2 or 0
+    local maxMessageRows = math.max(2, ui.height - progressRows - buttonRows - 7)
+
+    while #messageLines > maxMessageRows do
+        messageLines[#messageLines] = nil
+    end
+
+    if #messageLines == 0 then
+        messageLines[1] = ""
+    end
+
+    if #messageLines == maxMessageRows and #util.wrapText(modal.message or "", messageWidth) > maxMessageRows then
+        messageLines[#messageLines] = util.truncate(messageLines[#messageLines], math.max(1, messageWidth - 3)) .. "..."
+    end
+
+    local height = math.max(8, #messageLines + progressRows + buttonRows + 4)
+    local box = ui:modal(width, math.min(ui.height, height), modal.title, modal.accent)
+    local textX = box.innerX
+    local textY = box.innerY
+
+    for _, line in ipairs(messageLines) do
+        if textY > box.y + box.height - 3 then
+            break
+        end
+
+        ui:text(textX, textY, util.truncate(line, box.innerWidth), ui.theme.text, ui.theme.surface)
+        textY = textY + 1
+    end
+
+    if modal.progress then
+        ui:text(textX, textY, util.truncate(modal.progress.message or "", box.innerWidth), ui.theme.labelText or ui.theme.text, ui.theme.surface)
+        textY = textY + 1
+        ui:progress(textX, textY, box.innerWidth, modal.progress.ratio or 0)
+        textY = textY + 1
+    end
+
+    if #modal.buttons > 0 then
+        local gap = #modal.buttons > 1 and 1 or 0
+        local totalGap = (#modal.buttons - 1) * gap
+        local remaining = math.max(0, box.innerWidth - totalGap)
+        local buttonWidth = math.max(10, math.floor(remaining / #modal.buttons))
+        local totalWidth = (buttonWidth * #modal.buttons) + totalGap
+        local buttonX = box.innerX + math.max(0, math.floor((box.innerWidth - totalWidth) / 2))
+        local buttonY = box.y + box.height - 2
+
+        for index, button in ipairs(modal.buttons) do
+            local drawWidth = buttonWidth
+            if index == #modal.buttons then
+                drawWidth = math.max(buttonWidth, (box.innerX + box.innerWidth) - buttonX)
+            end
+
+            ui:button("modal_button", buttonX, buttonY, drawWidth, button.label, {
+                active = index == modal.selectedIndex,
+                height = 1,
+                meta = {
+                    index = index,
+                    id = button.id
+                }
+            })
+            buttonX = buttonX + drawWidth + gap
+        end
+    end
+end
+
+local function performUpdate(state)
+    local updateInfo = state.updateInfo
+    if not updateInfo or not updateInfo.remoteManifest then
+        return
+    end
+
+    interruptPlayback(state, false)
+
+    state.modal = makeModal(
+        "Updating",
+        "Preparing update...",
+        nil,
+        {
+            busy = true,
+            progress = {
+                ratio = 0,
+                message = "Preparing update..."
+            }
+        }
+    )
+    state.status = "Applying update " .. updateInfo.targetVersion
+    state.lastError = nil
+    state.dirty = true
+
+    local ok, resultOrError = updater.installFromManifest(updateInfo.remoteManifest, {
+        onProgress = function(info)
+            if state.modal then
+                state.modal.message = info.message or state.modal.message
+                state.modal.progress = info
+            end
+            state.status = info.message or state.status
+            state.dirty = true
+        end
+    })
+
+    if ok then
+        state.status = "Updated to version " .. updateInfo.targetVersion
+        state.modal = makeModal(
+            "Update Complete",
+            string.format(
+                "Updated from %s to %s. Restarting now...",
+                updateInfo.currentVersion,
+                updateInfo.targetVersion
+            ),
+            nil,
+            {
+                busy = true,
+                progress = {
+                    ratio = 1,
+                    message = "Restarting..."
+                }
+            }
+        )
+        state.dirty = true
+        sleep(0.4)
+        state.exitRequested = true
+        state.rebootRequested = true
+    else
+        state.status = "Update failed"
+        state.lastError = tostring(resultOrError)
+        state.modal = makeModal(
+            "Update Failed",
+            "The update could not be completed.\n" .. tostring(resultOrError),
+            {
+                { id = "modal_close", label = "Close" }
+            },
+            {
+                selectedIndex = 1
+            }
+        )
+        state.dirty = true
+    end
+end
+
+local function activateModalButton(state, buttonId)
+    if buttonId == "update_confirm" then
+        performUpdate(state)
+    elseif buttonId == "update_cancel" then
+        state.modal = nil
+        state.status = "Update skipped"
+        state.lastError = nil
+        state.dirty = true
+    elseif buttonId == "modal_close" then
+        state.modal = nil
+        state.dirty = true
+    end
+end
+
+local function handleModalClick(state, x, y)
+    local hit = state.ui:hitTest(x, y)
+    if not hit or hit.id ~= "modal_button" or not hit.meta then
+        return
+    end
+
+    state.modal.selectedIndex = hit.meta.index or state.modal.selectedIndex
+    state.dirty = true
+    activateModalButton(state, hit.meta.id)
+end
+
+local function handleModalKey(state, key)
+    if not state.modal or state.modal.busy or #state.modal.buttons == 0 then
+        return
+    end
+
+    if key == keys.left or key == keys.up then
+        state.modal.selectedIndex = state.modal.selectedIndex - 1
+        if state.modal.selectedIndex < 1 then
+            state.modal.selectedIndex = #state.modal.buttons
+        end
+        state.dirty = true
+    elseif key == keys.right or key == keys.down or key == keys.tab then
+        state.modal.selectedIndex = state.modal.selectedIndex + 1
+        if state.modal.selectedIndex > #state.modal.buttons then
+            state.modal.selectedIndex = 1
+        end
+        state.dirty = true
+    elseif key == keys.enter or key == keys.space then
+        local button = state.modal.buttons[state.modal.selectedIndex]
+        if button then
+            activateModalButton(state, button.id)
+        end
+    elseif key == keys.backspace then
+        local fallback = state.modal.buttons[#state.modal.buttons]
+        if fallback then
+            activateModalButton(state, fallback.id)
+        end
+    end
+end
+
 local function currentTitle(state)
     if state.page == "playlists" then
         return "Playlist Selection"
@@ -385,20 +869,21 @@ local function render(state)
 
     local width, height = ui.width, ui.height
     local listY = 4
-    local footerHeight = 3
+    local footerHeight = 4
     local listHeight = math.max(1, height - listY - footerHeight + 1)
-    local playlist = currentPlaylist(state)
-    local clock = util.safeFormatTime()
+    local clock = state.clockText or util.safeFormatTime()
     local pageIsTracks = state.page == "tracks"
     local title = currentTitle(state)
     local headerColor = ui.theme.header or ui.theme.accent
     local titleBarColor = ui.theme.titleBar or ui.theme.surface
     local actionBarColor = state.lastError and colors.pink or (ui.theme.actionBar or ui.theme.accent)
+    local progressRatio = state.playing and state.playbackProgress or 0
 
     ui:fill(1, 1, width, height, ui.theme.background)
     ui:fill(1, 1, width, 1, headerColor)
     ui:text(1, 1, util.truncate("KAMI-RADIO 2.0", math.max(1, width - #clock - 1)), ui.theme.text, headerColor)
     ui:text(math.max(1, width - #clock + 1), 1, clock, ui.theme.text, headerColor)
+    drawSearchRow(state, pageIsTracks and "tracks" or "playlists")
     ui:fill(1, 3, width, 1, titleBarColor, ui.theme.text, " ")
     ui:text(1, 3, util.truncate(title, width), ui.theme.text, titleBarColor)
     ui:addHit("title_action", 1, 3, width, 3, {
@@ -406,36 +891,44 @@ local function render(state)
     })
 
     if pageIsTracks then
-        local trackItems = playlist and playlist.songs or {}
+        local trackItems, selectedTrackRow = buildTrackItems(state)
         if state.manualTrackScroll then
             local maxScroll = math.max(1, #trackItems - listHeight + 1)
             state.trackScroll = util.clamp(state.trackScroll or 1, 1, maxScroll)
         else
-            ensureVisibleSelection(state, listHeight)
+            state.trackScroll = ensureVisibleRow(state.trackScroll, selectedTrackRow, #trackItems, listHeight)
         end
-        state.trackScroll = ui:list("tracks", 1, listY, width, listHeight, trackItems, state.selectedTrackIndex, state.trackScroll, {
+        state.trackScroll = ui:list("tracks", 1, listY, width, listHeight, trackItems, selectedTrackRow, state.trackScroll, {
             plain = true,
             formatter = function(item, index)
-                return formatTrackLabel(state, item, index)
+                return formatTrackLabel(state, item.sourceItem, item.sourceIndex)
             end
         })
-    else
-        local visibleRows = math.max(1, listHeight)
-        local maxScroll = math.max(1, #state.playlists - visibleRows + 1)
-        state.playlistScroll = util.clamp(state.playlistScroll or 1, 1, maxScroll)
-        if state.browserPlaylistIndex < state.playlistScroll then
-            state.playlistScroll = state.browserPlaylistIndex
-        elseif state.browserPlaylistIndex >= state.playlistScroll + visibleRows then
-            state.playlistScroll = state.browserPlaylistIndex - visibleRows + 1
+        if #trackItems == 0 then
+            ui:centerText(1, listY + math.floor(math.max(0, listHeight - 1) / 2), width, "No matching songs", ui.theme.labelText or ui.theme.text, ui.theme.background)
         end
+    else
+        local playlistItems, selectedPlaylistRow = buildPlaylistItems(state)
+        local visibleRows = math.max(1, listHeight)
+        state.playlistScroll = ensureVisibleRow(state.playlistScroll, selectedPlaylistRow, #playlistItems, visibleRows)
 
-        state.playlistScroll = ui:list("playlists", 1, listY, width, listHeight, state.playlists, state.browserPlaylistIndex, state.playlistScroll, {
+        state.playlistScroll = ui:list("playlists", 1, listY, width, listHeight, playlistItems, selectedPlaylistRow, state.playlistScroll, {
             plain = true,
             formatter = function(item)
-                return formatPlaylistLabel(item)
+                return formatPlaylistLabel(item.sourceItem)
             end
         })
+        if #playlistItems == 0 then
+            ui:centerText(1, listY + math.floor(math.max(0, listHeight - 1) / 2), width, "No matching playlists", ui.theme.labelText or ui.theme.text, ui.theme.background)
+        end
     end
+
+    ui:progressBlocks(1, height - 3, width, progressRatio, {
+        background = ui.theme.surfaceAlt,
+        foreground = ui.theme.accent,
+        filledGlyph = "█",
+        emptyGlyph = "░"
+    })
 
     local volumeText = string.format("%02d", math.floor(state.volume * 100))
     drawControlStrip(ui, height - 2, width, {
@@ -454,11 +947,19 @@ local function render(state)
     ui:fill(1, height, width, 1, actionBarColor, ui.theme.text, " ")
     ui:text(1, height, util.truncate(currentActionText(state), width), ui.theme.text, actionBarColor)
 
-    state.lastRenderClock = clock
+    if state.modal then
+        renderModal(state)
+    end
+
     state.dirty = false
 end
 
 local function handleClick(state, x, y)
+    if state.modal then
+        handleModalClick(state, x, y)
+        return
+    end
+
     local hit = state.ui:hitTest(x, y)
     if not hit then
         return
@@ -468,22 +969,31 @@ local function handleClick(state, x, y)
         state.playlistScroll = hit.meta.scroll
         state.dirty = true
     elseif hit.id == "playlists" and hit.meta and hit.meta.index then
-        state.browserPlaylistIndex = hit.meta.index
-        openPlaylist(state, hit.meta.index)
+        state.browserPlaylistIndex = hit.meta.item.sourceIndex
+        invalidateCache(state, "playlists")
+        openPlaylist(state, hit.meta.item.sourceIndex)
     elseif hit.id == "tracks" and hit.meta and hit.meta.kind == "scrollbar" and hit.meta.scroll then
         state.trackScroll = hit.meta.scroll
         state.manualTrackScroll = true
         state.dirty = true
     elseif hit.id == "tracks" and hit.meta and hit.meta.index then
-        state.selectedTrackIndex = hit.meta.index
+        state.selectedTrackIndex = hit.meta.item.sourceIndex
         state.manualTrackScroll = false
+        invalidateCache(state, "tracks")
         playSelected(state)
+    elseif hit.id == "search_box" and hit.meta and hit.meta.target then
+        state.activeSearch = hit.meta.target
+        state.status = hit.meta.target == "tracks" and "Searching songs" or "Searching playlists"
+        state.dirty = true
     elseif hit.id == "title_action" then
         if state.page == "tracks" then
             state.page = "playlists"
             state.browserPlaylistIndex = state.playlistIndex
+            invalidateCache(state, "playlists")
+            state.activeSearch = nil
         else
             openPlaylist(state, state.browserPlaylistIndex or state.playlistIndex)
+            state.activeSearch = nil
         end
         state.dirty = true
     elseif hit.id == "play_pause" then
@@ -511,39 +1021,106 @@ local function handleClick(state, x, y)
     end
 end
 
+local function handleScroll(state, direction, x, y)
+    if state.modal then
+        return
+    end
+
+    local hit = state.ui:hitTest(x, y)
+    if not hit then
+        return
+    end
+
+    local step = direction > 0 and 1 or -1
+    if hit.id == "playlists" then
+        moveFilteredSelection(state, "playlists", step)
+    elseif hit.id == "tracks" then
+        moveFilteredSelection(state, "tracks", step)
+    end
+end
+
+local function handleSearchKey(state, key)
+    local target = currentSearchTarget(state)
+    local query = target == "tracks" and state.trackSearch or state.playlistSearch
+
+    if key == keys.backspace then
+        setSearchQuery(state, target, util.dropLastCharacter(query))
+        return true
+    elseif key == keys.enter or key == keys.tab then
+        state.activeSearch = nil
+        state.dirty = true
+        return true
+    elseif key == keys.up then
+        moveFilteredSelection(state, target, -1)
+        return true
+    elseif key == keys.down then
+        moveFilteredSelection(state, target, 1)
+        return true
+    end
+
+    return false
+end
+
+local function handleChar(state, value)
+    if not isSearchActive(state) then
+        return
+    end
+
+    local target = currentSearchTarget(state)
+    local query = target == "tracks" and state.trackSearch or state.playlistSearch
+    setSearchQuery(state, target, query .. value)
+end
+
+local function handlePaste(state, value)
+    if not isSearchActive(state) then
+        return
+    end
+
+    local target = currentSearchTarget(state)
+    local query = target == "tracks" and state.trackSearch or state.playlistSearch
+    setSearchQuery(state, target, query .. tostring(value or ""))
+end
+
 local function handleKey(state, key)
+    if state.modal then
+        handleModalKey(state, key)
+        return
+    end
+
+    if isSearchActive(state) and handleSearchKey(state, key) then
+        return
+    end
+
     local playlist = currentPlaylist(state)
     if state.page == "playlists" then
-        if key == keys.up and state.browserPlaylistIndex > 1 then
-            state.browserPlaylistIndex = state.browserPlaylistIndex - 1
-            state.dirty = true
-        elseif key == keys.down and state.browserPlaylistIndex < #state.playlists then
-            state.browserPlaylistIndex = state.browserPlaylistIndex + 1
-            state.dirty = true
+        if key == keys.up then
+            moveFilteredSelection(state, "playlists", -1)
+        elseif key == keys.down then
+            moveFilteredSelection(state, "playlists", 1)
         elseif key == keys.enter then
             openPlaylist(state, state.browserPlaylistIndex)
         elseif key == keys.left or key == keys.right then
             state.page = "tracks"
+            state.activeSearch = nil
+            state.dirty = true
+        elseif key == keys.slash then
+            state.activeSearch = "playlists"
             state.dirty = true
         end
         return
     end
 
-    if key == keys.up and playlist and state.selectedTrackIndex and state.selectedTrackIndex > 1 then
-        state.selectedTrackIndex = state.selectedTrackIndex - 1
-        state.manualTrackScroll = false
-        state.dirty = true
-        persist(state)
-    elseif key == keys.down and playlist and state.selectedTrackIndex and state.selectedTrackIndex < #playlist.songs then
-        state.selectedTrackIndex = state.selectedTrackIndex + 1
-        state.manualTrackScroll = false
-        state.dirty = true
-        persist(state)
+    if key == keys.up then
+        moveFilteredSelection(state, "tracks", -1)
+    elseif key == keys.down then
+        moveFilteredSelection(state, "tracks", 1)
     elseif key == keys.enter then
         playSelected(state)
     elseif key == keys.backspace then
         state.page = "playlists"
         state.browserPlaylistIndex = state.playlistIndex
+        invalidateCache(state, "playlists")
+        state.activeSearch = nil
         state.dirty = true
     elseif key == keys.space then
         togglePlayPause(state)
@@ -559,22 +1136,27 @@ local function handleKey(state, key)
         stopPlayback(state)
     elseif key == keys.r then
         reloadCatalog(state)
+    elseif key == keys.slash then
+        state.activeSearch = "tracks"
+        state.dirty = true
     end
 end
 
 local function playerLoop(state)
-    while true do
+    while not state.exitRequested do
         local playlist = currentPlaylist(state)
         local track = currentTrack(state)
         if playlist and track and state.playing then
             local token = state.playbackToken
             state.status = "Buffering " .. track.name
             state.lastError = nil
+            setPlaybackProgress(state, 0)
             state.dirty = true
 
             local ok, dataOrError = catalog.fetchTrackData(playlist, track)
             if token ~= state.playbackToken or not state.playing then
             elseif not ok then
+                setPlaybackProgress(state, 0)
                 state.status = "Failed to load track"
                 state.lastError = tostring(dataOrError)
                 state.playing = false
@@ -589,10 +1171,13 @@ local function playerLoop(state)
                     return state.volume
                 end, function()
                     return token ~= state.playbackToken or not state.playing
+                end, function(ratio)
+                    setPlaybackProgress(state, ratio)
                 end)
 
                 if token ~= state.playbackToken then
                 elseif completed then
+                    setPlaybackProgress(state, 1)
                     advanceTrack(state)
                     if not state.playing then
                         state.status = "Queue ended"
@@ -612,24 +1197,30 @@ local function playerLoop(state)
 end
 
 local function renderLoop(state)
-    while true do
-        local clock = util.safeFormatTime()
-        if state.dirty or clock ~= state.lastRenderClock then
+    while not state.exitRequested do
+        refreshClock(state)
+        if state.dirty then
             render(state)
         end
-        sleep(0.1)
+        sleep(0.05)
     end
 end
 
 local function inputLoop(state)
-    while true do
+    while not state.exitRequested do
         local event, a, b, c = os.pullEvent()
         if event == "mouse_click" then
             handleClick(state, b, c)
+        elseif event == "mouse_scroll" then
+            handleScroll(state, a, b, c)
         elseif event == "monitor_touch" then
             handleClick(state, b, c)
         elseif event == "key" then
             handleKey(state, a)
+        elseif event == "char" then
+            handleChar(state, a)
+        elseif event == "paste" then
+            handlePaste(state, a)
         elseif event == "term_resize" or event == "monitor_resize" then
             state.dirty = true
         end
@@ -643,6 +1234,8 @@ function M.run()
         error("HTTP API is required for remote playlists.")
     end
 
+    local updateInfo, updateErr = updater.checkForUpdate()
+
     local entries = config.load("config.json")
     local playlists, warnings = catalog.loadPlaylists(entries)
     if #playlists == 0 then
@@ -654,7 +1247,11 @@ function M.run()
     state.display = display
     state.hasMonitor = hasMonitor
     state.ui = UI.new(display)
-    state.status = #warnings > 0 and ("Ready with " .. #warnings .. " warning(s)") or "Ready"
+    state.status = buildReadyStatus(warnings, updateErr)
+
+    if updateInfo and updateInfo.updateAvailable then
+        showUpdatePrompt(state, updateInfo)
+    end
 
     parallel.waitForAny(
         function()
@@ -667,6 +1264,10 @@ function M.run()
             inputLoop(state)
         end
     )
+
+    if state.rebootRequested and os.reboot then
+        os.reboot()
+    end
 end
 
 return M

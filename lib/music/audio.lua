@@ -11,8 +11,13 @@ function M.findSpeakers()
     return speakers
 end
 
-function M.playData(data, speakers, getVolume, shouldStop)
+function M.playData(data, speakers, getVolume, shouldStop, onProgress)
     local decoder = dfpwm.make_decoder()
+    local total = math.max(1, #data)
+
+    if onProgress then
+        onProgress(0, 0, total)
+    end
 
     for offset = 1, #data, 16 * 1024 do
         if shouldStop() then
@@ -45,6 +50,15 @@ function M.playData(data, speakers, getVolume, shouldStop)
                 pending[side] = nil
             end
         end
+
+        if onProgress then
+            local played = math.min(offset + #chunk - 1, total)
+            onProgress(played / total, played, total)
+        end
+    end
+
+    if onProgress then
+        onProgress(1, total, total)
     end
 
     return true

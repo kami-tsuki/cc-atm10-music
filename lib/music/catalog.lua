@@ -1,24 +1,8 @@
 ---@diagnostic disable: undefined-global
+local httpClient = require("music.http")
 local util = require("music.util")
 
 local M = {}
-
-local function httpRead(url)
-    local lastError = "request failed"
-    for attempt = 1, 3 do
-        local ok, response = pcall(http.get, url, nil, true)
-        if ok and response then
-            local body = response.readAll()
-            response.close()
-            return true, body
-        end
-
-        lastError = tostring(response)
-        sleep(0.2 * attempt)
-    end
-
-    return false, lastError
-end
 
 local function normalizeSong(song)
     if type(song) == "string" then
@@ -129,7 +113,7 @@ function M.loadPlaylists(entries)
 
     for _, entry in ipairs(entries) do
         local url = M.rawUrl(entry.repo, entry.branch, entry.index)
-        local ok, bodyOrError = httpRead(url)
+        local ok, bodyOrError = httpClient.read(url)
         if ok then
             local songs = parseIndexBody(bodyOrError)
             if #songs > 0 then
@@ -153,7 +137,7 @@ end
 
 function M.fetchTrackData(playlist, track)
     local url = M.trackUrl(playlist, track)
-    local ok, bodyOrError = httpRead(url)
+    local ok, bodyOrError = httpClient.read(url)
     if ok then
         return true, bodyOrError, url
     end

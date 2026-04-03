@@ -1,5 +1,6 @@
 ---@diagnostic disable: undefined-global
 local M = {}
+local UTF8_PATTERN = "[%z\1-\127\194-\244][\128-\191]*"
 
 function M.clamp(value, minimum, maximum)
     if value < minimum then
@@ -103,6 +104,101 @@ function M.splitLines(value)
         lines[#lines + 1] = line
     end
     return lines
+end
+
+function M.wrapText(value, width)
+    value = tostring(value or "")
+    width = math.max(1, tonumber(width) or 1)
+
+    local lines = {}
+    for paragraph in value:gmatch("([^\n]*)\n?") do
+        if paragraph == "" then
+            if #lines == 0 or lines[#lines] ~= "" then
+                lines[#lines + 1] = ""
+            end
+        else
+            local current = ""
+            for word in paragraph:gmatch("%S+") do
+                if current == "" then
+                    current = word
+                elseif #current + 1 + #word <= width then
+                    current = current .. " " .. word
+                else
+                    if #current > 0 then
+                        lines[#lines + 1] = current
+                    end
+
+                    while #word > width do
+                        lines[#lines + 1] = word:sub(1, width)
+                        word = word:sub(width + 1)
+                    end
+
+                    current = word
+                end
+            end
+
+            if current ~= "" then
+                lines[#lines + 1] = current
+            end
+        end
+    end
+
+    if #lines > 0 and lines[#lines] == "" then
+        lines[#lines] = nil
+    end
+
+    return lines
+end
+
+function M.textWidth(value)
+    local width = 0
+    for _ in tostring(value or ""):gmatch(UTF8_PATTERN) do
+        width = width + 1
+    end
+    return width
+end
+
+function M.dropLastCharacter(value)
+    local chars = {}
+    for char in tostring(value or ""):gmatch(UTF8_PATTERN) do
+        chars[#chars + 1] = char
+    end
+    chars[#chars] = nil
+    return table.concat(chars)
+end
+
+function M.fitTextWidth(value, width)
+    width = math.max(0, tonumber(width) or 0)
+    if width == 0 then
+        return ""
+    end
+
+    local chars = {}
+    for char in tostring(value or ""):gmatch(UTF8_PATTERN) do
+        chars[#chars + 1] = char
+        if #chars >= width then
+            break
+        end
+    end
+
+    return table.concat(chars)
+end
+
+function M.makeProgressBar(width, ratio, filledGlyph, emptyGlyph)
+    width = math.max(0, tonumber(width) or 0)
+    ratio = M.clamp(ratio or 0, 0, 1)
+    filledGlyph = filledGlyph or "█"
+    emptyGlyph = emptyGlyph or "░"
+
+    local filled = math.floor((width * ratio) + 0.5)
+    local empty = math.max(0, width - filled)
+    local bar = string.rep(filledGlyph, filled) .. string.rep(emptyGlyph, empty)
+    local barWidth = M.textWidth(bar)
+    if barWidth < width then
+        bar = bar .. string.rep(emptyGlyph, width - barWidth)
+    end
+
+    return M.fitTextWidth(bar, width)
 end
 
 function M.findIndexByField(items, field, expected)

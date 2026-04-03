@@ -86,6 +86,10 @@ function UI:text(x, y, value, textColor, background)
     self.target.write(value)
 end
 
+function UI:textWidth(value)
+    return util.textWidth(value)
+end
+
 function UI:centerText(x, y, width, value, textColor, background)
     value = util.truncate(value, width)
     local offset = math.max(0, math.floor((width - #value) / 2))
@@ -100,6 +104,35 @@ function UI:panel(x, y, width, height, title, accent)
         self:fill(x, y, width, 1, accent)
         self:text(x + 1, y, util.truncate(title or "", math.max(0, width - 2)), self.theme.text, accent)
     end
+end
+
+function UI:modal(width, height, title, accent)
+    width = math.max(12, math.min(self.width, width or self.width))
+    height = math.max(6, math.min(self.height, height or self.height))
+
+    local x = math.max(1, math.floor((self.width - width) / 2) + 1)
+    local y = math.max(1, math.floor((self.height - height) / 2) + 1)
+    local shadowX = math.min(self.width, x + 1)
+    local shadowY = math.min(self.height, y + 1)
+    local shadowWidth = math.max(0, math.min(width, self.width - shadowX + 1))
+    local shadowHeight = math.max(0, math.min(height, self.height - shadowY + 1))
+
+    if shadowWidth > 0 and shadowHeight > 0 then
+        self:fill(shadowX, shadowY, shadowWidth, shadowHeight, colors.black, self.theme.text, " ")
+    end
+
+    self:panel(x, y, width, height, title, accent)
+
+    return {
+        x = x,
+        y = y,
+        width = width,
+        height = height,
+        innerX = x + 1,
+        innerY = y + 1,
+        innerWidth = math.max(1, width - 2),
+        innerHeight = math.max(1, height - 2)
+    }
 end
 
 function UI:badge(x, y, text, background, foreground)
@@ -120,6 +153,34 @@ function UI:button(id, x, y, width, label, options)
     self:addHit(id, x, y, x + width - 1, y + height - 1, options.meta)
 end
 
+function UI:input(id, x, y, width, label, value, options)
+    options = options or {}
+
+    local active = options.active or false
+    local background = active and (options.activeBackground or self.theme.selected) or (options.background or self.theme.surfaceAlt)
+    local foreground = options.foreground or self.theme.text
+    local placeholderColor = options.placeholderColor or self.theme.labelText or self.theme.text
+    local prefix = label and (label .. ": ") or ""
+    local content = tostring(value or "")
+    local display = prefix
+    local displayColor = foreground
+
+    if content ~= "" then
+        display = display .. content
+    else
+        display = display .. tostring(options.placeholder or "")
+        displayColor = placeholderColor
+    end
+
+    if active and util.textWidth(display) < math.max(0, width - 2) then
+        display = display .. "_"
+    end
+
+    self:fill(x, y, width, 1, background, foreground, " ")
+    self:text(x + 1, y, util.fitTextWidth(display, math.max(0, width - 2)), displayColor, background)
+    self:addHit(id, x, y, x + width - 1, y, options.meta)
+end
+
 function UI:progress(x, y, width, ratio, fillColor, background)
     ratio = util.clamp(ratio or 0, 0, 1)
     local filled = math.floor(width * ratio + 0.5)
@@ -127,6 +188,19 @@ function UI:progress(x, y, width, ratio, fillColor, background)
     if filled > 0 then
         self:fill(x, y, filled, 1, fillColor or self.theme.progress)
     end
+end
+
+function UI:progressBlocks(x, y, width, ratio, options)
+    options = options or {}
+
+    local background = options.background or self.theme.surfaceAlt
+    local foreground = options.foreground or self.theme.text
+    local filledGlyph = options.filledGlyph or "█"
+    local emptyGlyph = options.emptyGlyph or "░"
+    local bar = util.makeProgressBar(width, ratio, filledGlyph, emptyGlyph)
+
+    self:fill(x, y, width, 1, background, foreground, " ")
+    self:text(x, y, bar, foreground, background)
 end
 
 function UI:list(id, x, y, width, height, items, selectedIndex, scroll, options)
