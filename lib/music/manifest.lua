@@ -161,6 +161,7 @@ function M.normalize(parsed, defaults)
     local preserve, preserveLookup = normalizeStringList(parsed.preserve or {})
 
     return {
+        tabletName = util.trim(parsed["Tablet name"] or parsed.tabletName or ""),
         version = version,
         repo = repo,
         branch = branch,

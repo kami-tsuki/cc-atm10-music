@@ -2,6 +2,7 @@
 local audio = require("music.audio")
 local catalog = require("music.catalog")
 local config = require("music.config")
+local manifest = require("music.manifest")
 local UI = require("music.ui")
 local updater = require("music.updater")
 local util = require("music.util")
@@ -156,6 +157,16 @@ local function currentTrack(state)
     return playlist and playlist.songs[state.trackIndex] or nil
 end
 
+local function loadAppMetadata()
+    local localManifest = manifest.load("manifest.json")
+    if not localManifest then
+        return "KAMI-RADIO", "unknown"
+    end
+
+    return util.trim(localManifest.tabletName or "") ~= "" and localManifest.tabletName or "KAMI-RADIO",
+        util.trim(localManifest.version or "") ~= "" and localManifest.version or "unknown"
+end
+
 local function ensureTrackSelection(state)
     local playlist = currentPlaylist(state)
     if not playlist or #playlist.songs == 0 then
@@ -171,10 +182,13 @@ end
 local function makeState(playlists, warnings)
     local playlistName = settings.get(SETTINGS.playlist, "")
     local trackName = settings.get(SETTINGS.track, "")
+    local tabletName, appVersion = loadAppMetadata()
 
     local state = {
         playlists = playlists,
         warnings = warnings,
+        tabletName = tabletName,
+        appVersion = appVersion,
         playlistIndex = util.findIndexByField(playlists, "name", playlistName) or 1,
         browserPlaylistIndex = util.findIndexByField(playlists, "name", playlistName) or 1,
         trackIndex = 1,
@@ -203,6 +217,7 @@ local function makeState(playlists, warnings)
         trackSearch = "",
         activeSearch = nil,
         playbackProgress = 0,
+        playbackBaseRatio = 0,
         clockText = util.safeFormatTime(),
         nextClockRefreshAt = 0,
         nextPersistAt = 0,
@@ -276,6 +291,23 @@ local function advanceTrack(state)
     state.manualTrackScroll = false
 end
 
+local function chooseShuffledIndex(state, playlist)
+    if not playlist or #playlist.songs == 0 then
+        return nil
+    end
+
+    if #playlist.songs == 1 then
+        return 1
+    end
+
+    local nextIndex = math.random(#playlist.songs)
+    if nextIndex == state.trackIndex then
+        nextIndex = (nextIndex % #playlist.songs) + 1
+    end
+
+    return nextIndex
+end
+
 local function interruptPlayback(state, keepPlaying)
     state.playbackToken = state.playbackToken + 1
     state.playing = keepPlaying
@@ -295,6 +327,7 @@ local function setPlaylist(state, index)
     state.selectedTrackIndex = 1
     state.trackScroll = 1
     state.manualTrackScroll = false
+    state.playbackBaseRatio = 0
     state.status = "Playlist loaded: " .. playlist.name
     state.lastError = nil
     ensureTrackSelection(state)
@@ -316,19 +349,21 @@ local function openPlaylist(state, index)
     end
 
     state.page = "tracks"
+    state.playbackBaseRatio = 0
     state.playbackProgress = 0
     state.status = "Playlist: " .. playlist.name
     persist(state)
 end
 
-local function playSelected(state)
+local function playSelected(state, startRatio)
     if not currentPlaylist(state) then
         return
     end
 
     state.manualTrackScroll = false
     state.trackIndex = state.selectedTrackIndex
-    state.playbackProgress = 0
+    state.playbackBaseRatio = util.clamp(startRatio or 0, 0, 1)
+    state.playbackProgress = state.playbackBaseRatio
     local track = currentTrack(state)
     state.status = track and ("Buffering " .. track.name) or "Ready"
     state.lastError = nil
@@ -336,6 +371,7 @@ local function playSelected(state)
 end
 
 local function stopPlayback(state)
+    state.playbackBaseRatio = 0
     state.playbackProgress = 0
     state.status = "Stopped"
     state.lastError = nil
@@ -356,17 +392,22 @@ local function stepTrack(state, direction)
         return
     end
 
-    local nextIndex = (state.trackIndex or 1) + direction
-    if nextIndex < 1 then
-        nextIndex = #playlist.songs
-    elseif nextIndex > #playlist.songs then
-        nextIndex = 1
+    local nextIndex
+    if state.shuffle then
+        nextIndex = chooseShuffledIndex(state, playlist)
+    else
+        nextIndex = (state.trackIndex or 1) + direction
+        if nextIndex < 1 then
+            nextIndex = #playlist.songs
+        elseif nextIndex > #playlist.songs then
+            nextIndex = 1
+        end
     end
 
     state.selectedTrackIndex = nextIndex
     state.trackIndex = nextIndex
     state.manualTrackScroll = false
-    playSelected(state)
+    playSelected(state, 0)
 end
 
 local function adjustVolume(state, delta)
@@ -554,6 +595,7 @@ local function reloadCatalog(state)
     state.trackIndex = playlist and (util.findIndexByField(playlist.songs, "name", currentTrackName) or 1) or 1
     state.selectedTrackIndex = state.trackIndex
     state.manualTrackScroll = false
+    state.playbackBaseRatio = 0
     state.playbackProgress = 0
     state.status = "Library refreshed"
     state.lastError = nil
@@ -567,7 +609,8 @@ end
 
 local function setPlaybackProgress(state, ratio)
     local width = math.max(1, (state.ui and state.ui.width) or 32)
-    local quantized = math.floor((util.clamp(ratio or 0, 0, 1) * width) + 0.5) / width
+    local effectiveRatio = state.playbackBaseRatio + (util.clamp(ratio or 0, 0, 1) * (1 - state.playbackBaseRatio))
+    local quantized = math.floor((util.clamp(effectiveRatio, 0, 1) * width) + 0.5) / width
     if quantized ~= state.playbackProgress then
         state.playbackProgress = quantized
         state.dirty = true
@@ -968,10 +1011,11 @@ local function render(state)
     local titleBarColor = ui.theme.titleBar or ui.theme.surface
     local actionBarColor = state.lastError and colors.pink or (ui.theme.actionBar or ui.theme.accent)
     local progressRatio = state.playing and state.playbackProgress or 0
+    local headerTitle = string.format("%s %s", state.tabletName or "KAMI-RADIO", state.appVersion or "unknown")
 
     ui:fill(1, 1, width, height, ui.theme.background)
     ui:fill(1, 1, width, 1, headerColor)
-    ui:text(1, 1, util.truncate("KAMI-RADIO 2.0", math.max(1, width - #clock - 1)), ui.theme.text, headerColor)
+    ui:text(1, 1, util.truncate(headerTitle, math.max(1, width - #clock - 1)), ui.theme.text, headerColor)
     ui:text(math.max(1, width - #clock + 1), 1, clock, ui.theme.text, headerColor)
     drawSearchRow(state, pageIsTracks and "tracks" or "playlists")
     ui:fill(1, 3, width, 1, titleBarColor, ui.theme.text, " ")
@@ -1019,6 +1063,12 @@ local function render(state)
         filledGlyph = "=",
         emptyGlyph = "-"
     })
+    if currentTrack(state) then
+        ui:addHit("progress_bar", 1, height - 3, width, height - 3, {
+            x1 = 1,
+            width = width
+        })
+    end
 
     local volumeText = string.format("%02d", math.floor(state.volume * 100))
     drawControlStrip(ui, height - 2, width, {
@@ -1071,6 +1121,12 @@ local function handleClick(state, x, y)
         state.manualTrackScroll = false
         invalidateCache(state, "tracks")
         playSelected(state)
+    elseif hit.id == "progress_bar" and hit.meta and currentTrack(state) then
+        local width = math.max(1, hit.meta.width or 1)
+        local ratio = width <= 1 and 0 or ((x - (hit.meta.x1 or 1)) / (width - 1))
+        ratio = util.clamp(ratio, 0, 1)
+        state.selectedTrackIndex = state.trackIndex
+        playSelected(state, ratio)
     elseif hit.id == "search_box" and hit.meta and hit.meta.target then
         state.activeSearch = hit.meta.target
         state.status = hit.meta.target == "tracks" and "Searching songs" or "Searching playlists"
@@ -1263,10 +1319,11 @@ local function playerLoop(state)
                     return token ~= state.playbackToken or not state.playing
                 end, function(ratio)
                     setPlaybackProgress(state, ratio)
-                end)
+                end, math.floor(#dataOrError * state.playbackBaseRatio))
 
                 if token ~= state.playbackToken then
                 elseif completed then
+                    state.playbackBaseRatio = 0
                     setPlaybackProgress(state, 1)
                     advanceTrack(state)
                     if not state.playing then
@@ -1275,6 +1332,9 @@ local function playerLoop(state)
                     persist(state)
                     state.dirty = true
                 else
+                    if not state.playing then
+                        state.playbackBaseRatio = 0
+                    end
                     state.status = state.playing and "Switching track" or "Stopped"
                     state.dirty = true
                     persist(state)
