@@ -90,8 +90,15 @@ local function writeBinaryFile(path, body)
         return false, "failed to open file"
     end
 
-    handle.write(body)
+    local ok, err = pcall(handle.write, body)
     handle.close()
+    if not ok then
+        if fs.exists(path) then
+            fs.delete(path)
+        end
+        return false, tostring(err)
+    end
+
     return true
 end
 

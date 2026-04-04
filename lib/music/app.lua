@@ -1176,7 +1176,8 @@ local function render(state)
     local favoriteTrack = selectedTrack(state) or currentTrack(state)
     local favoriteActive = favoriteTrack and isTrackFavorited(state, currentPlaylist(state), favoriteTrack) or false
     local favoriteWidth = favoriteTrack and width >= 8 and 4 or 0
-    local progressWidth = math.max(1, width - favoriteWidth)
+    local progressWidth = width
+    local transportWidth = math.max(1, width - favoriteWidth)
 
     ui:fill(1, 1, width, height, ui.theme.background)
     ui:fill(1, 1, width, 1, headerColor)
@@ -1234,24 +1235,23 @@ local function render(state)
             width = progressWidth
         })
     end
-    if favoriteWidth > 0 then
-        ui:button("favorite_toggle", progressWidth + 1, height - 3, favoriteWidth, ICONS.favorite, {
-            active = favoriteActive,
-            height = 1,
-            background = colors.red,
-            foreground = colors.white,
-            activeBackground = colors.white,
-            activeForeground = colors.red
-        })
-    end
-
     local volumeText = string.format("%02d", math.floor(state.volume * 100))
-    drawControlStrip(ui, height - 2, width, {
+    drawControlStrip(ui, height - 2, transportWidth, {
         { id = "prev_track", width = 4, label = ICONS.prev },
         { id = "play_pause", width = 4, label = state.playing and ICONS.pause or ICONS.play, active = state.playing },
         { id = "stop", width = 4, label = ICONS.stop },
         { id = "next_track", width = 4, label = ICONS.next }
     })
+    if favoriteWidth > 0 then
+        ui:button("favorite_toggle", transportWidth + 1, height - 2, favoriteWidth, ICONS.favorite, {
+            active = favoriteActive,
+            height = 1,
+            background = ui.theme.button,
+            foreground = ui.theme.buttonText,
+            activeBackground = colors.red,
+            activeForeground = colors.white
+        })
+    end
     drawControlStrip(ui, height - 1, width, {
         { id = "shuffle", width = 4, label = state.shuffle and ICONS.shuffleOn or ICONS.shuffleOff, active = state.shuffle },
         { id = "loop", width = 4, label = LOOP_ICONS[state.loopMode] },
