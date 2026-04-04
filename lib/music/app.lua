@@ -2,6 +2,8 @@
 local audio = require("music.audio")
 local catalog = require("music.catalog")
 local config = require("music.config")
+local favorite = require("music.favorite")
+local localLibrary = require("music.local")
 local manifest = require("music.manifest")
 local UI = require("music.ui")
 local updater = require("music.updater")
@@ -39,6 +41,7 @@ local ICONS = {
     shuffleOn = "<>",
     shuffleOff = "--",
     reload = "R",
+    favorite = "<3",
     volumeDown = "-",
     volumeUp = "+"
 }
@@ -157,6 +160,12 @@ local function currentTrack(state)
     return playlist and playlist.songs[state.trackIndex] or nil
 end
 
+local function selectedTrack(state)
+    local playlist = currentPlaylist(state)
+    local index = state.selectedTrackIndex or state.trackIndex
+    return playlist and index and playlist.songs[index] or nil
+end
+
 local function loadAppMetadata()
     local localManifest = manifest.load("manifest.json")
     if not localManifest then
@@ -165,6 +174,68 @@ local function loadAppMetadata()
 
     return util.trim(localManifest.tabletName or "") ~= "" and localManifest.tabletName or "KAMI-RADIO",
         util.trim(localManifest.version or "") ~= "" and localManifest.version or "unknown"
+end
+
+local function loadConfiguredEntries()
+    local ok, entriesOrError = pcall(config.load, "config.json")
+    if ok then
+        return entriesOrError, nil
+    end
+
+    local err = tostring(entriesOrError)
+    if err:find("config.json does not contain any playlists.", 1, true)
+        or err:find("Unable to read 'config.json': missing file", 1, true) then
+        return {}, nil
+    end
+
+    return nil, err
+end
+
+local function loadLibrary()
+    local entries, configErr = loadConfiguredEntries()
+    if not entries then
+        error(configErr)
+    end
+
+    local playlists = {}
+    local warnings = {}
+
+    if #entries > 0 then
+        local remotePlaylists, remoteWarnings = catalog.loadPlaylists(entries)
+        for _, playlist in ipairs(remotePlaylists) do
+            playlists[#playlists + 1] = playlist
+        end
+        for _, warning in ipairs(remoteWarnings) do
+            warnings[#warnings + 1] = warning
+        end
+    end
+
+    local localPlaylists, localWarnings = localLibrary.loadPlaylists()
+    for _, playlist in ipairs(localPlaylists) do
+        playlists[#playlists + 1] = playlist
+    end
+    for _, warning in ipairs(localWarnings) do
+        warnings[#warnings + 1] = warning
+    end
+
+    if #playlists == 0 then
+        error("No playable playlists were loaded from config.json or local/.")
+    end
+
+    return playlists, warnings
+end
+
+local function buildFavoriteLookup(playlists)
+    return favorite.buildLookup(playlists)
+end
+
+local function isTrackFavorited(state, playlist, track)
+    if not playlist or not track then
+        return false
+    end
+
+    local lookup = state.favoriteLookup or {}
+    return favorite.isFavorited(lookup, playlist, track)
 end
 
 local function ensureTrackSelection(state)
@@ -227,6 +298,7 @@ local function makeState(playlists, warnings)
         libraryRevision = 1,
         playlistSearchKey = "",
         trackSearchKey = "",
+        favoriteLookup = buildFavoriteLookup(playlists),
         caches = {
             playlists = {
                 key = nil,
@@ -580,20 +652,31 @@ end
 local function reloadCatalog(state)
     local currentPlaylistName = currentPlaylist(state) and currentPlaylist(state).name or ""
     local currentTrackName = currentTrack(state) and currentTrack(state).name or ""
-    local entries = config.load("config.json")
-    local playlists, warnings = catalog.loadPlaylists(entries)
-    if #playlists == 0 then
-        error("No playable playlists were loaded from config.json.")
+    local currentKey = nil
+    if currentPlaylist(state) and currentTrack(state) then
+        currentKey = favorite.buildTrackKey(currentPlaylist(state), currentTrack(state))
     end
+
+    local playlists, warnings = loadLibrary()
 
     state.playlists = playlists
     state.warnings = warnings
+    state.favoriteLookup = buildFavoriteLookup(playlists)
     invalidateCache(state)
     state.libraryRevision = state.libraryRevision + 1
     state.playlistIndex = util.findIndexByField(playlists, "name", currentPlaylistName) or 1
     state.browserPlaylistIndex = state.playlistIndex
     local playlist = currentPlaylist(state)
-    state.trackIndex = playlist and (util.findIndexByField(playlist.songs, "name", currentTrackName) or 1) or 1
+    local restoredTrack = nil
+    if playlist and currentKey then
+        for index, song in ipairs(playlist.songs) do
+            if favorite.buildTrackKey(playlist, song) == currentKey then
+                restoredTrack = index
+                break
+            end
+        end
+    end
+    state.trackIndex = playlist and (restoredTrack or util.findIndexByField(playlist.songs, "name", currentTrackName) or 1) or 1
     state.selectedTrackIndex = state.trackIndex
     state.manualTrackScroll = false
     state.playbackBaseRatio = 0
@@ -657,7 +740,9 @@ end
 
 local function formatTrackLabel(state, item, index)
     local prefix = index == state.trackIndex and state.playing and ">" or " "
-    return prefix .. " " .. item.name
+    local favorited = isTrackFavorited(state, currentPlaylist(state), item)
+    local favoriteMarker = favorited and " <3" or ""
+    return prefix .. " " .. item.name .. favoriteMarker
 end
 
 local function drawControlStrip(ui, y, width, controls)
@@ -948,6 +1033,28 @@ local function requestReload(state)
     state.dirty = true
 end
 
+local function requestToggleFavorite(state)
+    local playlist = currentPlaylist(state)
+    local track = selectedTrack(state) or currentTrack(state)
+    if not playlist or not track then
+        return
+    end
+
+    if not queueAction(state, "favorite", {
+        playlistIndex = state.playlistIndex,
+        trackIndex = state.selectedTrackIndex or state.trackIndex
+    }) then
+        state.status = "Background task already running"
+        state.dirty = true
+        return
+    end
+
+    state.status = isTrackFavorited(state, playlist, track) and ("Removing from Favorites: " .. track.name)
+        or ("Adding to Favorites: " .. track.name)
+    state.lastError = nil
+    state.dirty = true
+end
+
 local function requestUpdate(state)
     local updateInfo = state.updateInfo
     if not updateInfo or not updateInfo.remoteManifest then
@@ -1066,6 +1173,10 @@ local function render(state)
     local actionBarColor = state.lastError and colors.pink or (ui.theme.actionBar or ui.theme.accent)
     local progressRatio = state.playing and state.playbackProgress or 0
     local headerTitle = string.format("%s %s", state.tabletName or "KAMI-RADIO", state.appVersion or "unknown")
+    local favoriteTrack = selectedTrack(state) or currentTrack(state)
+    local favoriteActive = favoriteTrack and isTrackFavorited(state, currentPlaylist(state), favoriteTrack) or false
+    local favoriteWidth = favoriteTrack and width >= 8 and 4 or 0
+    local progressWidth = math.max(1, width - favoriteWidth)
 
     ui:fill(1, 1, width, height, ui.theme.background)
     ui:fill(1, 1, width, 1, headerColor)
@@ -1111,16 +1222,26 @@ local function render(state)
         end
     end
 
-    ui:progressBlocks(1, height - 3, width, progressRatio, {
+    ui:progressBlocks(1, height - 3, progressWidth, progressRatio, {
         background = ui.theme.surfaceAlt,
         foreground = ui.theme.accent,
         filledGlyph = "=",
         emptyGlyph = "-"
     })
     if currentTrack(state) then
-        ui:addHit("progress_bar", 1, height - 3, width, height - 3, {
+        ui:addHit("progress_bar", 1, height - 3, progressWidth, height - 3, {
             x1 = 1,
-            width = width
+            width = progressWidth
+        })
+    end
+    if favoriteWidth > 0 then
+        ui:button("favorite_toggle", progressWidth + 1, height - 3, favoriteWidth, ICONS.favorite, {
+            active = favoriteActive,
+            height = 1,
+            background = colors.red,
+            foreground = colors.white,
+            activeBackground = colors.white,
+            activeForeground = colors.red
         })
     end
 
@@ -1181,6 +1302,8 @@ local function handleClick(state, x, y)
         ratio = util.clamp(ratio, 0, 1)
         state.selectedTrackIndex = state.trackIndex
         playSelected(state, ratio)
+    elseif hit.id == "favorite_toggle" then
+        requestToggleFavorite(state)
     elseif hit.id == "search_box" and hit.meta and hit.meta.target then
         state.activeSearch = hit.meta.target
         state.status = hit.meta.target == "tracks" and "Searching songs" or "Searching playlists"
@@ -1334,6 +1457,8 @@ local function handleKey(state, key)
         stepTrack(state, 1)
     elseif key == keys.s then
         stopPlayback(state)
+    elseif key == keys.f then
+        requestToggleFavorite(state)
     elseif key == keys.r then
         requestReload(state)
     elseif key == keys.slash then
@@ -1371,6 +1496,32 @@ local function runPendingAction(state, action)
             )
             state.dirty = true
         end
+    elseif action.kind == "favorite" then
+        local payload = action.payload or {}
+        local playlist = state.playlists[payload.playlistIndex or 0]
+        local track = playlist and playlist.songs[payload.trackIndex or 0] or nil
+        if not playlist or not track then
+            state.status = "Favorite action failed"
+            state.lastError = "selected track no longer exists"
+            state.dirty = true
+            return
+        end
+
+        local ok, resultOrError = favorite.toggle(playlist, track)
+        if not ok then
+            state.status = "Favorites update failed"
+            state.lastError = tostring(resultOrError)
+            state.dirty = true
+            return
+        end
+
+        reloadCatalog(state)
+        local favoriteAdded = type(resultOrError) == "table" and resultOrError.added == true
+        local favoriteName = tostring(resultOrError and resultOrError.name or track.name or "track")
+        state.status = favoriteAdded and ("Added to Favorites: " .. favoriteName)
+            or ("Removed from Favorites: " .. favoriteName)
+        state.lastError = nil
+        state.dirty = true
     end
 end
 
@@ -1488,17 +1639,9 @@ end
 function M.run()
     math.randomseed(randomSeed())
 
-    if not http then
-        error("HTTP API is required for remote playlists.")
-    end
-
     local updateInfo, updateErr = updater.checkForUpdate()
 
-    local entries = config.load("config.json")
-    local playlists, warnings = catalog.loadPlaylists(entries)
-    if #playlists == 0 then
-        error("No playable playlists were loaded from config.json.")
-    end
+    local playlists, warnings = loadLibrary()
 
     local display, hasMonitor = findDisplay()
     local state = makeState(playlists, warnings)

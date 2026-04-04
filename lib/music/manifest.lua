@@ -46,6 +46,25 @@ local function normalizeStringList(items)
     return normalized, lookup
 end
 
+local function matchesPath(path, values, lookup)
+    path = tostring(path or "")
+    if path == "" then
+        return false
+    end
+
+    if lookup and lookup[path] then
+        return true
+    end
+
+    for _, value in ipairs(values or {}) do
+        if hasWildcard(value) and path:match(globToPattern(value)) then
+            return true
+        end
+    end
+
+    return false
+end
+
 local function normalizeFileEntry(entry)
     if type(entry) == "string" then
         local path = util.trim(entry)
@@ -245,6 +264,10 @@ function M.expandFiles(entries, repo, branch, cache)
     end)
 
     return expanded
+end
+
+function M.isPreservedPath(manifest, path)
+    return matchesPath(path, manifest and manifest.preserve or nil, manifest and manifest.preserveLookup or nil)
 end
 
 function M.compareVersions(left, right)

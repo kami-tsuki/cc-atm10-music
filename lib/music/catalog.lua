@@ -1,5 +1,6 @@
 ---@diagnostic disable: undefined-global
 local httpClient = require("music.http")
+local localLibrary = require("music.local")
 local util = require("music.util")
 
 local M = {}
@@ -106,6 +107,10 @@ function M.trackPath(track)
 end
 
 function M.trackUrl(playlist, track)
+    if playlist and playlist.isLocal then
+        return localLibrary.trackFilePath(playlist, track)
+    end
+
     return M.rawUrl(playlist.repo, playlist.branch, M.trackPath(track))
 end
 
@@ -139,6 +144,10 @@ function M.loadPlaylists(entries)
 end
 
 function M.fetchTrackData(playlist, track)
+    if playlist and playlist.isLocal then
+        return localLibrary.readTrackData(playlist, track)
+    end
+
     local url = M.trackUrl(playlist, track)
     local ok, bodyOrError = httpClient.read(url)
     if ok then

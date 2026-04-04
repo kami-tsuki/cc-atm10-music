@@ -2,6 +2,10 @@
 local M = {}
 
 function M.read(url, headers)
+    if not http or type(http.get) ~= "function" then
+        return false, "HTTP API unavailable"
+    end
+
     local lastError = "request failed"
 
     for attempt = 1, 3 do

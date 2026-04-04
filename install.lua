@@ -230,6 +230,25 @@ local function normalizeStringList(items)
     return values, lookup
 end
 
+local function isPreservedPath(manifest, path)
+    path = trim(path)
+    if path == "" then
+        return false
+    end
+
+    if manifest.preserveLookup[path] then
+        return true
+    end
+
+    for _, value in ipairs(manifest.preserve or {}) do
+        if hasWildcard(value) and path:match(globToPattern(value)) then
+            return true
+        end
+    end
+
+    return false
+end
+
 local function loadManifest()
     local ok, bodyOrError = readUrl(rawUrl(MANIFEST_PATH))
     if not ok then
@@ -295,7 +314,7 @@ print("")
 local failures = {}
 
 for _, path in ipairs(manifest.obsolete) do
-    if fs.exists(path) then
+    if fs.exists(path) and not isPreservedPath(manifest, path) then
         fs.delete(path)
         print("Removed obsolete " .. path)
     end
@@ -306,7 +325,7 @@ if #manifest.obsolete > 0 then
 end
 
 for _, entry in ipairs(manifest.files) do
-    if manifest.preserveLookup[entry.path] and fs.exists(entry.path) then
+    if isPreservedPath(manifest, entry.path) and fs.exists(entry.path) then
         print("Keeping existing " .. entry.path)
     else
         write("Downloading " .. entry.path .. " ... ")

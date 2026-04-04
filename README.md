@@ -64,6 +64,7 @@ update
 - Click a station on the left to switch playlists.
 - Click a track on the right to start playback.
 - Use the transport buttons for play/pause, stop, previous, next, shuffle, loop, reload, and volume.
+- Use the heart button on the progress row to add or remove the selected track from Favorites.
 
 ### Keyboard controls
 
@@ -73,6 +74,7 @@ update
 - `Left` / `Right`: previous / next track.
 - `[` / `]`: volume down / up.
 - `S`: stop.
+- `F`: add or remove the selected track from Favorites.
 - `R`: reload the playlist library from `config.json`.
 
 ### Playback behavior
@@ -80,6 +82,47 @@ update
 - The player stores playlist, track, volume, and playback settings with the ComputerCraft settings API.
 - Shuffle and loop state are persisted.
 - The player streams tracks from GitHub raw URLs.
+- The `local/` folder is preserved across installs and updates.
+
+## Local Playlists And Favorites
+
+The player automatically creates and reads playlists under `local/`.
+
+- `local/favorites/index.json` is created automatically.
+- Favoriting a song copies its audio file into `local/favorites/` and adds it to that playlist's `index.json`.
+- Removing a favorite deletes only the copied file from `local/favorites/` and removes the entry from that playlist.
+- The original source track is never deleted.
+
+You can also add your own local playlists without touching `config.json`.
+
+Folder layout:
+
+```text
+local/
+	favorites/
+		index.json
+	my-mixes/
+		index.json
+		Track One.dfpwm
+		ambient/
+			Track Two.dfpwm
+```
+
+Each local playlist folder needs an `index.json`. The file can be either a JSON array or an object with `name` and `songs`.
+
+Example:
+
+```json
+{
+	"name": "My Mixes",
+	"songs": [
+		{ "name": "Track One", "file": "Track One.dfpwm" },
+		{ "name": "Track Two", "file": "ambient/Track Two.dfpwm" }
+	]
+}
+```
+
+Local tracks behave like remote ones: they can be played, searched, shuffled, looped, and favorited.
 
 ## Configuring Playlists
 

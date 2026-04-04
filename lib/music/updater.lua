@@ -101,7 +101,7 @@ function M.installFromManifest(manifest, options)
     local downloadQueue = {}
     local skipped = 0
     for _, entry in ipairs(normalized.files) do
-        if normalized.preserveLookup[entry.path] and fs.exists(entry.path) then
+        if manifestModel.isPreservedPath(normalized, entry.path) and fs.exists(entry.path) then
             skipped = skipped + 1
         else
             downloadQueue[#downloadQueue + 1] = entry
@@ -110,7 +110,7 @@ function M.installFromManifest(manifest, options)
 
     local deleteQueue = {}
     for _, path in ipairs(normalized.obsolete) do
-        if not normalized.preserveLookup[path] and fs.exists(path) then
+        if not manifestModel.isPreservedPath(normalized, path) and fs.exists(path) then
             deleteQueue[#deleteQueue + 1] = path
         end
     end
