@@ -310,6 +310,7 @@ local ok, err = pcall(function()
     runProgram("/repo/install.lua")
 
     assertExists("startup.lua")
+    assertExists("update.lua")
     assertExists("manifest.json")
     assertExists("config.json")
     assertExists("lib/music/bootstrap.lua")

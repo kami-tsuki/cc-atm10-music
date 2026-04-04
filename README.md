@@ -38,6 +38,7 @@ The installer is intentionally non-interactive. It downloads the runtime from `m
 Installed files:
 
 - `startup.lua`
+- `update.lua`
 - `manifest.json`
 - `config.json`
 - `lib/music/*.lua`
@@ -48,6 +49,12 @@ After installation:
 
 ```sh
 startup
+```
+
+To manually check for and apply updates later:
+
+```sh
+update
 ```
 
 ## Using The Player

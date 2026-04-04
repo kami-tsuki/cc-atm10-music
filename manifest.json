@@ -1,10 +1,11 @@
 {
     "Tablet name": "KAMI-RADIO",
-    "version": "2.1.4",
+    "version": "2.1.5",
     "repo": "kami-tsuki/cc-atm10-music",
     "branch": "main",
     "files": [
         "startup.lua",
+        "update.lua",
         "README.md",
         "manifest.json",
         "config.json",

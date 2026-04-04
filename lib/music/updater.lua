@@ -9,6 +9,16 @@ M.MANIFEST_PATH = manifestModel.DEFAULT_PATH
 M.DEFAULT_REPO = manifestModel.DEFAULT_REPO
 M.DEFAULT_BRANCH = manifestModel.DEFAULT_BRANCH
 
+local function resolveManifestSource(localManifest, overrides)
+    overrides = overrides or {}
+
+    return {
+        repo = overrides.repo or (localManifest and localManifest.repo) or M.DEFAULT_REPO,
+        branch = overrides.branch or (localManifest and localManifest.branch) or M.DEFAULT_BRANCH,
+        path = overrides.path or M.MANIFEST_PATH
+    }
+end
+
 local function writeBody(path, body)
     util.ensureDir(path)
 
@@ -53,10 +63,11 @@ function M.compareVersions(left, right)
     return manifestModel.compareVersions(left, right)
 end
 
-function M.checkForUpdate()
+function M.checkForUpdate(options)
     local localManifest = M.loadManifest(M.MANIFEST_PATH)
     local currentVersion = localManifest and localManifest.version or "0.0.0"
-    local remoteManifest, err = M.fetchRemoteManifest()
+    local source = resolveManifestSource(localManifest, options)
+    local remoteManifest, err = M.fetchRemoteManifest(source.repo, source.branch, source.path)
     if not remoteManifest then
         return nil, err
     end
@@ -64,6 +75,7 @@ function M.checkForUpdate()
     return {
         localManifest = localManifest,
         remoteManifest = remoteManifest,
+        source = source,
         currentVersion = currentVersion,
         targetVersion = remoteManifest.version,
         updateAvailable = M.compareVersions(currentVersion, remoteManifest.version) < 0
