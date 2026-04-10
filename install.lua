@@ -1,7 +1,20 @@
 ---@diagnostic disable: undefined-global
+local APP_NAME = "cc-atm10-music"
+local TABLET_NAME = "KAMI-RADIO"
 local REPO = "kami-tsuki/cc-atm10-music"
 local BRANCH = "main"
 local MANIFEST_PATH = "manifest.json"
+local BOOTSTRAP_ROOT_FILES = {
+    ["startup.lua"] = true,
+    ["update.lua"] = true,
+    ["install.lua"] = true,
+    ["config.json"] = true,
+    ["README.md"] = true,
+}
+local BOOTSTRAP_PRESERVE = {
+    "config.json",
+    "local/*"
+}
 
 local function currentDir()
     if shell and shell.dir then
@@ -249,38 +262,121 @@ local function isPreservedPath(manifest, path)
     return false
 end
 
+local function isRuntimePath(path)
+    return path:match("^lib/") ~= nil or BOOTSTRAP_ROOT_FILES[path] == true
+end
+
+local function manifestPayloadFromManifest(manifest)
+    local payload = {
+        ["Tablet name"] = TABLET_NAME,
+        version = manifest.version or "0.0.0-bootstrap",
+        repo = manifest.repo or REPO,
+        branch = manifest.branch or BRANCH,
+        files = {},
+        obsolete = manifest.obsolete or {},
+        preserve = manifest.preserve or {}
+    }
+
+    local hasManifestEntry = false
+    for _, entry in ipairs(manifest.files or {}) do
+        if entry.path == MANIFEST_PATH then
+            hasManifestEntry = true
+        end
+
+        if entry.path == entry.source then
+            payload.files[#payload.files + 1] = entry.path
+        else
+            payload.files[#payload.files + 1] = {
+                path = entry.path,
+                source = entry.source
+            }
+        end
+    end
+
+    if not hasManifestEntry then
+        table.insert(payload.files, 1, MANIFEST_PATH)
+    end
+
+    local encoder = textutils.serialiseJSON or textutils.serializeJSON
+    if encoder then
+        return encoder(payload, true)
+    end
+
+    return textutils.serialize(payload)
+end
+
+local function buildBootstrapManifest(reason)
+    local repoFiles, repoErr = fetchRepoFiles(REPO, BRANCH)
+    if not repoFiles then
+        return nil, string.format("%s; bootstrap manifest generation failed: %s", tostring(reason or "manifest unavailable"), tostring(repoErr))
+    end
+
+    local files = {}
+    for _, path in ipairs(repoFiles) do
+        if path ~= MANIFEST_PATH and isRuntimePath(path) then
+            files[#files + 1] = {
+                path = path,
+                source = path,
+                isPattern = false
+            }
+        end
+    end
+
+    if #files == 0 then
+        return nil, "bootstrap manifest generation found no installable files"
+    end
+
+    table.sort(files, function(left, right)
+        return left.path < right.path
+    end)
+
+    local preserve, preserveLookup = normalizeStringList(BOOTSTRAP_PRESERVE)
+
+    return {
+        version = "0.0.0-bootstrap",
+        repo = REPO,
+        branch = BRANCH,
+        files = files,
+        obsolete = {},
+        preserve = preserve,
+        preserveLookup = preserveLookup,
+        generated = true,
+        generatedReason = tostring(reason or "manifest unavailable")
+    }
+end
+
 local function loadManifest()
     local ok, bodyOrError = readUrl(rawUrl(MANIFEST_PATH))
     if not ok then
-        return nil, bodyOrError
+        return buildBootstrapManifest(bodyOrError)
     end
 
     local parsed = textutils.unserializeJSON(bodyOrError)
     if type(parsed) ~= "table" then
-        return nil, "invalid manifest.json"
+        return buildBootstrapManifest("invalid manifest.json")
     end
 
     local version = trim(parsed.version or "")
     if version == "" then
-        return nil, "manifest.json is missing 'version'"
+        return buildBootstrapManifest("manifest.json is missing 'version'")
     end
 
     local files = {}
     for _, entry in ipairs(parsed.files or {}) do
         local normalized, err = normalizeFileEntry(entry)
         if not normalized then
-            return nil, err
+            return buildBootstrapManifest(err)
         end
         files[#files + 1] = normalized
     end
 
     if #files == 0 then
-        return nil, "manifest.json does not contain any files"
+        return buildBootstrapManifest("manifest.json does not contain any files")
     end
 
     local expandedFiles, expandErr = expandFileEntries(files, trim(parsed.repo or REPO), trim(parsed.branch or BRANCH))
     if not expandedFiles then
-        return nil, expandErr
+        return buildBootstrapManifest(expandErr)
     end
 
     local obsolete = normalizeStringList(parsed.obsolete or {})
@@ -293,7 +389,8 @@ local function loadManifest()
         files = expandedFiles,
         obsolete = obsolete,
         preserve = preserve,
-        preserveLookup = preserveLookup
+        preserveLookup = preserveLookup,
+        generated = false
     }
 end
 
@@ -303,12 +400,15 @@ end
 
 local manifest, manifestErr = loadManifest()
 if not manifest then
-    error("Failed to load update manifest: " .. tostring(manifestErr))
+    error("Failed to build install manifest: " .. tostring(manifestErr))
 end
 
-print("cc-atm10-music")
+print(APP_NAME)
 print("Installing runtime files into " .. currentDir())
-print("Target version: " .. manifest.version)
+print("Target version: " .. tostring(manifest.version))
+if manifest.generated then
+    print("Manifest not found yet, using bootstrap install mode.")
+end
 print("")
 
 local failures = {}
@@ -342,6 +442,17 @@ for _, entry in ipairs(manifest.files) do
             print("failed")
             failures[#failures + 1] = entry.path .. ": " .. tostring(bodyOrError)
         end
+    end
+end
+
+if manifest.generated then
+    write("Generating " .. MANIFEST_PATH .. " ... ")
+    local ok, err = writeBody(MANIFEST_PATH, manifestPayloadFromManifest(manifest))
+    if ok then
+        print("ok")
+    else
+        print("failed")
+        failures[#failures + 1] = MANIFEST_PATH .. ": " .. tostring(err)
     end
 end
 
